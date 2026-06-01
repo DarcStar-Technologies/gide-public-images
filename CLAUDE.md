@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 Guidance for Claude Code working in **`darcstar-technologies/gide-public-images`** —
 the public repository that builds the third-party prover **toolchain images** for
 the GIDE formal-verification pipeline. This is a navigation file; the
