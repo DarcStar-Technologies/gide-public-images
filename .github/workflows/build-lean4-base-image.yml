@@ -1,0 +1,387 @@
+name: Build & Push gide-lean4-base Image
+
+# Builds the generic Lean4 + Mathlib4 toolchain base image
+# (`gide-lean4-base`): Ubuntu + elan + Lean4 toolchain + pre-compiled
+# Mathlib. This is the slow, upstream-driven layer (`LEAN4_TOOLCHAIN`
+# and `MATHLIB_REV` cold-build is 30-60 min per arch). It is rebuilt
+# when upstream Lean4 / Mathlib bumps land, when the Dockerfile
+# changes, or on a weekly cron for Ubuntu CVE refreshes.
+#
+# This PUBLIC repo (DarcStar-Technologies/gide-public-images) owns
+# ONLY the toolchain base. The theorem-baking overlay (`gide-lean4`)
+# and the actual proof verification (the known-good theorem catalog)
+# live in the private DarcStar-Technologies/gide repo, which builds its
+# overlay `FROM ghcr.io/darcstar-technologies/gide-lean4-base:latest`.
+# Nothing here references `proofs/`, `src/`, uv, or check_proofs.py —
+# there is no proof content in this repo.
+#
+# The workflow implements the verify-then-promote pattern:
+#   1. Build the base candidate per-arch and merge into a multi-arch
+#      manifest under `:candidate-<sha>`.
+#   2. Run a self-contained toolchain SMOKE test inside the candidate
+#      image (inline Lean file that imports Mathlib and discharges a
+#      couple of trivial goals). If Mathlib fails to resolve or Lean
+#      can't elaborate the smoke file, the candidate is rejected and
+#      `:latest` stays untouched.
+#   3. On smoke-green, retag the base candidate as `:latest` (and
+#      `:<sha>`). The candidate tag is left in place for forensics.
+#
+# IMPORTANT — the smoke here is a TOOLCHAIN sanity check only (does
+# Mathlib resolve / does Lean elaborate). It deliberately does NOT verify
+# the GIDE proof catalog (not present in this repo). The proof gate the
+# old combined workflow ran before promoting now happens at ADOPTION time
+# in the private repo: the overlay pins this base by digest, and a
+# Renovate digest-bump PR runs `ci-formal-theorems` before the new base
+# is adopted. So `:latest` here is "toolchain-good"; the private pin is
+# "proof-verified". See migration plan §2.7.
+#
+# Triggers:
+#   - push to main of `tools/lean4-base.Dockerfile` or this workflow
+#   - weekly cron (Sunday 04:00 UTC) for Ubuntu / glibc CVE refreshes
+#     and for picking up upstream Mathlib commits between bumps
+#   - workflow_dispatch with optional `lean_toolchain` / `mathlib_rev`
+#     inputs for one-off bumps without a Dockerfile edit
+#   - pull_request: build + smoke only (no push, no promote)
+#
+# Multi-arch (linux/amd64 + linux/arm64) uses per-arch native builds +
+# manifest-merge, avoiding the 3-5x QEMU emulation tax on the Mathlib
+# bake.
+#
+# Runners: GitHub-hosted (free for public repos). Mathlib cold builds
+# are ~30-60 min/arch, comfortably within the 6h public-runner job
+# limit. If a future Mathlib bump pushes cold builds toward that limit,
+# switch the build/smoke jobs to a larger GitHub-hosted "larger runner"
+# label from the org runner group — see the per-job `runs-on` below.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/lean4-base.Dockerfile"
+      - ".github/workflows/build-lean4-base-image.yml"
+  pull_request:
+    paths:
+      - "tools/lean4-base.Dockerfile"
+      - ".github/workflows/build-lean4-base-image.yml"
+  schedule:
+    # Weekly Sunday 04:00 UTC for Ubuntu CVE refreshes and upstream
+    # Mathlib drift between explicit bumps.
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+    inputs:
+      lean_toolchain:
+        description: "leanprover/lean4 toolchain tag (default: image ARG default)"
+        required: false
+        default: ""
+      mathlib_rev:
+        description: "Mathlib4 git revision (tag or sha; default: image ARG default)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  packages: write
+
+# Serialize publishes against each other so no two runs race on
+# `gide-lean4-base:latest`. PR runs scope to their own group so
+# iterating commits cancels in-flight smoke builds.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('gide-lean4-base-pr-{0}', github.event.pull_request.number) || 'gide-lean4-base-publish' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  BASE_IMAGE: ghcr.io/darcstar-technologies/gide-lean4-base
+  CANDIDATE_TAG: candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  build-base:
+    name: Build base (${{ matrix.arch }})
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+          - arch: arm64
+            # GitHub-hosted arm64 runner (free for public repos). The
+            # arm64 Mathlib bake builds natively here, avoiding the
+            # QEMU tax.
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    # TODO(migration): GitHub-hosted runners cap at 6h/job; Mathlib cold
+    # builds are ~30-60 min/arch so 120 is generous headroom. Verify the
+    # standard runner (ubuntu-24.04 = ~16 GB RAM) is enough for the
+    # Mathlib bake under cold cache; bump to a larger runner label if
+    # OOM appears.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve build args
+        id: args
+        env:
+          LEAN_TOOLCHAIN: ${{ inputs.lean_toolchain }}
+          MATHLIB_REV: ${{ inputs.mathlib_rev }}
+        run: |
+          {
+            echo 'build_args<<EOF_BA'
+            [ -n "$LEAN_TOOLCHAIN" ] && echo "LEAN4_TOOLCHAIN=$LEAN_TOOLCHAIN"
+            [ -n "$MATHLIB_REV" ]    && echo "MATHLIB_REV=$MATHLIB_REV"
+            echo 'EOF_BA'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push base by digest
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          file: tools/lean4-base.Dockerfile
+          platforms: ${{ matrix.platform }}
+          # `push-by-digest=true` defers tag assignment; the merge job
+          # below stitches the per-arch digests into a multi-arch
+          # manifest list under the candidate tag.
+          outputs: type=image,name=${{ env.BASE_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          build-args: ${{ steps.args.outputs.build_args }}
+          # Registry-backed buildkit cache (NOT type=gha): the ~14 GB
+          # Mathlib base would blow GitHub Actions' 10 GB/repo cache cap
+          # and thrash. A GHCR `:buildcache-<arch>` image has no cap and
+          # gives a real warm path.
+          cache-from: type=registry,ref=${{ env.BASE_IMAGE }}:buildcache-${{ matrix.arch }}
+          cache-to: type=registry,ref=${{ env.BASE_IMAGE }}:buildcache-${{ matrix.arch }},mode=max
+          # SLSA provenance + SPDX SBOM attestations per-arch.
+          provenance: mode=max
+          sbom: true
+
+      - name: Export digest as artifact
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DIGEST" ]; then
+            echo "::error::buildx did not emit a digest output"
+            exit 1
+          fi
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: lean4-base-digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-base-manifest:
+    name: Merge base multi-arch manifest (candidate)
+    if: github.event_name != 'pull_request'
+    needs: build-base
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download per-arch digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: /tmp/digests
+          pattern: lean4-base-digest-*
+          merge-multiple: true
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Create + push candidate manifest list
+        env:
+          IMAGE: ${{ env.BASE_IMAGE }}
+          TAG: ${{ env.CANDIDATE_TAG }}
+        run: |
+          set -euo pipefail
+          sources=()
+          for f in /tmp/digests/*; do
+            digest="$(basename "$f")"
+            sources+=("${IMAGE}@sha256:${digest}")
+          done
+          if [ ${#sources[@]} -lt 2 ]; then
+            echo "::error::Expected >=2 per-arch digests, got ${#sources[@]}"
+            exit 1
+          fi
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${TAG}" \
+            "${sources[@]}"
+
+  smoke:
+    name: Toolchain smoke test against candidate base
+    if: github.event_name != 'pull_request'
+    needs: merge-base-manifest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Authenticate to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Pull candidate base
+        run: docker pull -q "${{ env.BASE_IMAGE }}:${{ env.CANDIDATE_TAG }}"
+
+      - name: Write inline Lean smoke file
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/smoke
+          cat > /tmp/smoke/Smoke.lean <<'EOF_SMOKE'
+          -- Self-contained toolchain smoke: proves that Mathlib resolves
+          -- inside the candidate base image and that elaboration plus a
+          -- couple of trivial tactics work. No GIDE proof content.
+          import Mathlib.Data.Real.Basic
+
+          theorem smoke (x : ℝ) (h : x ≥ 0) : x + 1 ≥ 1 := by linarith
+
+          example : (2 : ℕ) + 2 = 4 := rfl
+          EOF_SMOKE
+
+      - name: Verify smoke file with candidate toolchain
+        run: |
+          set -euo pipefail
+          # The base image bootstraps a Lake project at
+          # /home/lean/proof-env whose lakefile `require`s Mathlib (with
+          # pre-built oleans cached), and its ENTRYPOINT is
+          # `["lake", "env", "lean"]`. We mount the smoke file into that
+          # project dir and run the entrypoint, so the Mathlib import
+          # path resolves against the project's cached oleans.
+          # `lake env lean <file>` elaborates the file and exits
+          # non-zero on any error — that is the verify gate.
+          #
+          # TODO(migration): confirm the in-image WORKDIR + ENTRYPOINT
+          # against the published base. This assumes the Dockerfile's
+          # `WORKDIR /home/lean/proof-env` + `ENTRYPOINT ["lake","env",
+          # "lean"]` are unchanged. If the entrypoint changes, invoke
+          # `lake env lean Smoke.lean` explicitly via `--entrypoint` /
+          # an override instead of relying on the default entrypoint.
+          docker run --rm \
+            -v /tmp/smoke/Smoke.lean:/home/lean/proof-env/Smoke.lean:ro \
+            -w /home/lean/proof-env \
+            "${{ env.BASE_IMAGE }}:${{ env.CANDIDATE_TAG }}" \
+            Smoke.lean
+          echo "Toolchain smoke passed: Mathlib resolved and smoke goals elaborated."
+
+  promote:
+    name: Promote candidate to :latest
+    if: github.event_name != 'pull_request'
+    needs: [merge-base-manifest, smoke]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Authenticate to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Promote base candidate
+        env:
+          IMAGE: ${{ env.BASE_IMAGE }}
+          CANDIDATE: ${{ env.CANDIDATE_TAG }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # `imagetools create` re-tags the existing manifest list under
+          # new names without re-uploading any layers; cheap and
+          # idempotent. Both `:latest` (consumer-facing) and `:${sha}`
+          # (forensic) point at the verified candidate.
+          docker buildx imagetools create \
+            --tag "${IMAGE}:latest" \
+            --tag "${IMAGE}:${SHA}" \
+            "${IMAGE}:${CANDIDATE}"
+
+      - name: Verify multi-arch manifest
+        env:
+          BASE: ${{ env.BASE_IMAGE }}
+        run: |
+          set -euo pipefail
+          echo "Inspecting ${BASE}:latest"
+          docker buildx imagetools inspect "${BASE}:latest" | tee /tmp/inspect.txt
+          for plat in linux/amd64 linux/arm64; do
+            if ! grep -qE "Platform:\s*${plat}" /tmp/inspect.txt; then
+              echo "::error::${BASE}:latest manifest does not contain ${plat}; multi-arch promotion is broken."
+              exit 1
+            fi
+          done
+
+  smoke-validate-pr:
+    # PR-time gate: build the base Dockerfile with `push: false` so a
+    # typo in the elan install / Mathlib bake fails CI before merge.
+    # Per-arch native build mirrors the publish path. No push, no
+    # promote (the publish/promote jobs are gated on
+    # `github.event_name != 'pull_request'`).
+    name: Smoke-validate base (${{ matrix.arch }})
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    # TODO(migration): same 6h cap / RAM caveat as build-base applies.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Authenticate to GHCR
+        # Login precedes buildx so the docker-container builder mounts
+        # populated credentials: the registry `cache-from` below needs auth
+        # to import the `:buildcache-<arch>` tag (and avoids anonymous pull
+        # rate limits). Without it the cache import just misses and the PR
+        # build runs cold — non-fatal, but slow.
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Build (smoke-validate, no push)
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          file: tools/lean4-base.Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: false
+          # Registry-backed buildkit cache (NOT type=gha): the Mathlib
+          # base layers far exceed GitHub Actions' 10 GB/repo cache cap,
+          # which would evict constantly and force cold builds. A GHCR
+          # cache image has no such cap. Pull-only on PRs (no cache-to).
+          cache-from: type=registry,ref=${{ env.BASE_IMAGE }}:buildcache-${{ matrix.arch }}
