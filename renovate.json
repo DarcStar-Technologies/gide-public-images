@@ -1,0 +1,99 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits"
+  ],
+  "timezone": "UTC",
+  "schedule": ["before 6am on monday"],
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "description": "Pin GitHub Actions to a digest (short SHA + version comment).",
+      "matchManagers": ["github-actions"],
+      "pinDigests": true
+    },
+    {
+      "description": "Mathlib4 tags weekly. Keep these on the dependency dashboard for human ack rather than auto-opening a PR (and a ~30-60 min/arch base rebuild) every week.",
+      "matchDatasources": ["github-tags"],
+      "matchPackageNames": ["leanprover-community/mathlib4"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Group the Lean4 toolchain + Mathlib bumps so a coordinated base move lands as one reviewable PR.",
+      "matchFileNames": ["tools/lean4-base.Dockerfile"],
+      "groupName": "lean4 toolchain"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Z3 solver version pin in tools/z3.Dockerfile. Upstream tags ship as `z3-X.Y.Z`; extractVersion strips the `z3-` prefix so the ARG stays in bare semver form.",
+      "managerFilePatterns": ["/^tools/z3\\.Dockerfile$/"],
+      "matchStrings": ["ARG Z3_VERSION=(?<currentValue>[\\w.]+)"],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "Z3Prover/z3",
+      "extractVersionTemplate": "^z3-(?<version>.+)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "cvc5 SMT solver version pin in tools/cvc5.Dockerfile. Upstream tags ship as `cvc5-X.Y.Z`; extractVersion strips the `cvc5-` prefix.",
+      "managerFilePatterns": ["/^tools/cvc5\\.Dockerfile$/"],
+      "matchStrings": ["ARG CVC5_VERSION=(?<currentValue>[\\w.]+)"],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "cvc5/cvc5",
+      "extractVersionTemplate": "^cvc5-(?<version>.+)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Apalache TLA+ model checker version pin in tools/apalache.Dockerfile. Upstream tags ship as `vX.Y.Z`; extractVersion strips the `v` prefix.",
+      "managerFilePatterns": ["/^tools/apalache\\.Dockerfile$/"],
+      "matchStrings": ["ARG APALACHE_VERSION=(?<currentValue>[\\w.]+)"],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "apalache-mc/apalache",
+      "extractVersionTemplate": "^v(?<version>.+)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Yices2 SMT solver version pin in tools/yices2.Dockerfile. Upstream tags ship as `Yices-X.Y.Z`; extractVersion strips the `Yices-` prefix.",
+      "managerFilePatterns": ["/^tools/yices2\\.Dockerfile$/"],
+      "matchStrings": ["ARG YICES2_VERSION=(?<currentValue>[\\w.]+)"],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "SRI-CSL/yices2",
+      "extractVersionTemplate": "^Yices-(?<version>.+)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "dReal4 delta-complete SMT solver version pin in tools/dreal.Dockerfile. Upstream uses non-semver date-style tags (e.g. `4.21.06.2`) so `versioning: loose` is required.",
+      "managerFilePatterns": ["/^tools/dreal\\.Dockerfile$/"],
+      "matchStrings": ["ARG DREAL_VERSION=(?<currentValue>[\\w.]+)"],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "dreal/dreal4",
+      "versioningTemplate": "loose"
+    },
+    {
+      "customType": "regex",
+      "description": "Lean4 toolchain pin in tools/lean4-base.Dockerfile (`leanprover/lean4:vX.Y.Z` form). The `leanprover/lean4:` prefix is preserved by autoReplaceStringTemplate so the ARG retains its full elan-compatible form.",
+      "managerFilePatterns": ["/^tools/lean4-base\\.Dockerfile$/"],
+      "matchStrings": ["ARG LEAN4_TOOLCHAIN=leanprover/lean4:(?<currentValue>v[\\w.]+)"],
+      "autoReplaceStringTemplate": "ARG LEAN4_TOOLCHAIN=leanprover/lean4:{{{newValue}}}",
+      "datasourceTemplate": "github-tags",
+      "depNameTemplate": "leanprover/lean4",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Mathlib4 git revision pin in tools/lean4-base.Dockerfile. Tracks `leanprover-community/mathlib4` tags. Gated to the dependency dashboard by the matching packageRule (Mathlib tags weekly).",
+      "managerFilePatterns": ["/^tools/lean4-base\\.Dockerfile$/"],
+      "matchStrings": ["ARG MATHLIB_REV=(?<currentValue>v[\\w.]+)"],
+      "datasourceTemplate": "github-tags",
+      "depNameTemplate": "leanprover-community/mathlib4",
+      "versioningTemplate": "semver"
+    }
+  ]
+}

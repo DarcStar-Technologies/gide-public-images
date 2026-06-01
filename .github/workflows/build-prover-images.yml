@@ -1,0 +1,247 @@
+name: Build & Push Small Prover Images
+
+# MIGRATED (public repo darcstar-technologies/gide-public-images): builds
+# the generic SMT / model-checking solver images. Pure third-party binaries,
+# no GIDE content. Already runs on free GitHub-hosted ubuntu-24.04. Image refs
+# (ghcr.io/darcstar-technologies/gide-<solver>) are org-scoped and unchanged,
+# so private-repo consumers need no edits.
+#
+# trigger-audit: matrix-of: tools/z3.Dockerfile, tools/cvc5.Dockerfile, tools/yices2.Dockerfile, tools/dreal.Dockerfile, tools/apalache.Dockerfile
+#
+# Rebuilds the small prover images (z3, cvc5, yices2, dreal, apalache)
+# whenever any of their Dockerfiles changes. This consolidates what
+# was previously manual `docker build && docker push` work for these
+# five images into a single CI matrix; the heavier prover images
+# (lean4, isabelle) keep their dedicated workflows because their cold
+# build times (~30-150 min) and resource needs (CBO heap, Mathlib
+# bake) warrant per-image tuning.
+#
+# The leading `trigger-audit: matrix-of:` marker (#1532) declares the
+# Dockerfile paths this workflow builds so
+# `tools/ci/check_image_build_triggers.py` audits each as a
+# (Dockerfile, this-workflow) pair. Without the marker the basename-
+# match heuristic would silently exclude these five — there's no
+# `build-z3-image.yml` etc. Auditing each prover Dockerfile against
+# the shared `paths:` filter below catches the case where a future PR
+# adds a host-tree COPY (e.g. baking in a custom config) without also
+# updating the trigger to fire on edits to that source.
+#
+# Each matrix entry builds a single Dockerfile via QEMU emulation on
+# an x64 Blacksmith runner. The smaller provers are essentially
+# `curl + unzip` Dockerfiles, so emulating arm64 from x64 is cheap
+# (the runtime binaries aren't executed during build, just laid
+# down) and avoids the per-arch native split-build complexity that
+# `build-lean4-image.yml` needs.
+#
+# Per-image arch coverage (driven by upstream artifact availability):
+# - z3, cvc5, apalache  -> linux/amd64 + linux/arm64
+# - yices2, dreal       -> linux/amd64 only (no upstream arm64 build)
+#
+# PR-time gate: pull_request runs build with `push: false` for any
+# Dockerfile that changed, so a typo'd URL or broken extract step
+# fails CI before merge.
+#
+# Scheduled rebuilds (nightly, 03:00 UTC): the small prover matrix
+# rebuilds every night so Ubuntu/glibc/CA-bundle CVE refreshes land on
+# `:latest` without requiring a Dockerfile edit. Renovate customManagers
+# (renovate.json) auto-detect upstream version bumps for Z3, cvc5,
+# Apalache, Yices2, and dReal and open ARG-bump PRs which the
+# path-filtered triggers above turn into rebuilds at merge time. The
+# nightly cron is the safety net for everything Renovate cannot see
+# (base-image security patches, transitive apt-get dependencies). Warm
+# GHA layer cache (`type=gha,mode=max`) keeps the cron run cheap (~5 min
+# wall clock when nothing changed); the publish concurrency group below
+# serializes against in-flight main pushes.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/z3.Dockerfile"
+      - "tools/cvc5.Dockerfile"
+      - "tools/yices2.Dockerfile"
+      - "tools/dreal.Dockerfile"
+      - "tools/apalache.Dockerfile"
+      - ".github/workflows/build-prover-images.yml"
+  pull_request:
+    paths:
+      - "tools/z3.Dockerfile"
+      - "tools/cvc5.Dockerfile"
+      - "tools/yices2.Dockerfile"
+      - "tools/dreal.Dockerfile"
+      - "tools/apalache.Dockerfile"
+      - ".github/workflows/build-prover-images.yml"
+  schedule:
+    # Nightly 03:00 UTC. The small prover matrix is cheap to rebuild
+    # under warm cache; staggered before the lean4 (Sun 04:00) and
+    # isabelle (Sun 05:00) crons to avoid runner contention on Sundays.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    # No per-prover input: the matrix builds all five in parallel on
+    # dispatch. Per-prover gating would need the `matrix` context inside
+    # a job-level `if:`, which actionlint correctly rejects (matrix is
+    # only in scope inside a matrix-instantiated job's body, not in the
+    # condition that gates the whole strategy). If you need to rebuild a
+    # single prover, push a Dockerfile-only edit and the path filter will
+    # do the right thing.
+
+permissions:
+  contents: read
+  packages: write
+
+# Push / workflow_dispatch share a serial `publish` group per-prover so
+# back-to-back main pushes don't race on `:latest`. PR runs are scoped
+# per-PR with `cancel-in-progress: true` so iterating commits on a hot
+# PR cancels in-flight smoke builds. Mirrors build-lean4-image.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'publish' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-push:
+    name: Build & push (${{ matrix.prover }})
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - prover: z3
+            dockerfile: tools/z3.Dockerfile
+            platforms: linux/amd64,linux/arm64
+          - prover: cvc5
+            dockerfile: tools/cvc5.Dockerfile
+            platforms: linux/amd64,linux/arm64
+          - prover: apalache
+            dockerfile: tools/apalache.Dockerfile
+            platforms: linux/amd64,linux/arm64
+          - prover: yices2
+            dockerfile: tools/yices2.Dockerfile
+            platforms: linux/amd64
+          - prover: dreal
+            dockerfile: tools/dreal.Dockerfile
+            platforms: linux/amd64
+    # Cost: small prover images (download + apt-extract + small RUN
+    # chain) don't benefit much from Blacksmith's sticky-disk Docker
+    # Layer Cache; warm GHA cache (`type=gha,mode=max`, configured
+    # below) gives reasonable layer reuse on its own. Free
+    # GitHub-hosted x86 (1x billing) handles the matrix in <15 min
+    # cold and saves ~600 Blacksmith vcpu-min/month at the prior
+    # weekly cron + Renovate-bump cadence. amd64 is native here;
+    # the linux/arm64 secondary platform on z3/cvc5/apalache builds
+    # via QEMU emulation (slower but acceptable for these small
+    # Dockerfiles).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Register QEMU emulators (foreign-arch support)
+        # Required when `platforms` includes linux/arm64 on an x64
+        # host. Idempotent if QEMU is already registered. amd64-only
+        # entries technically don't need this, but the step is cheap
+        # and keeps the matrix uniform.
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4
+
+      # Login MUST precede `Set up Docker Buildx` (#1573): buildkit's
+      # docker-container driver mounts `~/.docker/config.json` at
+      # builder-start time; credentials written after aren't visible.
+      - name: Authenticate to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        # Standard upstream buildx; the previous Blacksmith-specific
+        # `useblacksmith/setup-docker-builder@v1` is a no-go on
+        # GitHub-hosted runners.
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Build and push (${{ matrix.prover }})
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platforms }}
+          push: true
+          tags: |
+            ghcr.io/darcstar-technologies/gide-${{ matrix.prover }}:latest
+            ghcr.io/darcstar-technologies/gide-${{ matrix.prover }}:${{ github.sha }}
+          # Per-prover cache scope so unrelated provers don't poison
+          # each other's layer reuse.
+          cache-from: type=gha,scope=prover-${{ matrix.prover }}
+          cache-to: type=gha,mode=max,scope=prover-${{ matrix.prover }}
+          # SLSA provenance + SPDX SBOM attestations attached as OCI
+          # referrers under the published manifest.
+          provenance: mode=max
+          sbom: true
+
+      - name: Verify manifest matches advertised platforms
+        # Belt-and-braces: confirm the freshly-pushed `:latest`
+        # manifest advertises every platform we built for. Catches a
+        # future regression where someone accidentally drops
+        # `linux/arm64` from a prover that should still publish it.
+        env:
+          IMAGE: ghcr.io/darcstar-technologies/gide-${{ matrix.prover }}
+          PLATFORMS: ${{ matrix.platforms }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "${IMAGE}:latest" | tee /tmp/inspect.txt
+          IFS=',' read -ra plats <<< "$PLATFORMS"
+          for plat in "${plats[@]}"; do
+            if ! grep -qE "Platform:\s*${plat}" /tmp/inspect.txt; then
+              echo "::error::Manifest for ${IMAGE}:latest does not contain ${plat}; build is broken."
+              exit 1
+            fi
+          done
+
+  smoke-validate-pr:
+    # PR-time gate: build the Dockerfile with `push: false` so a
+    # broken URL / unzip / TARGETARCH case fails CI before merge.
+    # The matrix mirrors `build-push` so PR validation has the same
+    # arch coverage as the publish path.
+    name: Smoke-validate (${{ matrix.prover }})
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - prover: z3
+            dockerfile: tools/z3.Dockerfile
+            platforms: linux/amd64,linux/arm64
+          - prover: cvc5
+            dockerfile: tools/cvc5.Dockerfile
+            platforms: linux/amd64,linux/arm64
+          - prover: apalache
+            dockerfile: tools/apalache.Dockerfile
+            platforms: linux/amd64,linux/arm64
+          - prover: yices2
+            dockerfile: tools/yices2.Dockerfile
+            platforms: linux/amd64
+          - prover: dreal
+            dockerfile: tools/dreal.Dockerfile
+            platforms: linux/amd64
+    # Cost: free GitHub-hosted x86 mirrors the publish-path runner
+    # so PR smoke-validate uses the same warm GHA cache scope and
+    # the same toolchain as the publish path.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Register QEMU emulators
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Build (smoke-validate, no push)
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platforms }}
+          push: false
+          cache-from: type=gha,scope=prover-${{ matrix.prover }}

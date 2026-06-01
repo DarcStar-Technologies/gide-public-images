@@ -1,0 +1,92 @@
+name: Scan published images for CVEs
+
+# Trivy scan of every PUBLIC toolchain image at `:latest`, published from
+# this repo (darcstar-technologies/gide-public-images). Output is uploaded
+# as SARIF to this repo's GitHub Security tab.
+#
+# Scope: only the toolchain images BUILT HERE. The proof-baking leaf images
+# (gide-lean4, gide-isabelle) and gide-ci-base are scanned by the PRIVATE
+# DarcStar-Technologies/gide repo's own scan workflow — they are not built or
+# published from this repo.
+#
+# These packages are PUBLIC on GHCR, so anonymous pulls work; the `docker
+# login` step below is kept only to avoid anonymous pull rate limits when
+# Trivy fetches layers. It can be dropped if rate limits are not a concern.
+#
+# Cadence: Mon + Thu 06:00 UTC — Monday sits ~1h after the Sunday rebuild
+# slots (build-prover-images / build-lean4-base / build-isabelle-base) so the
+# post-bake CVE state is captured the morning after publication.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1,4"
+  workflow_dispatch:
+    inputs:
+      severity:
+        description: "Minimum severity to flag (CRITICAL, HIGH, MEDIUM, LOW)"
+        required: false
+        default: "CRITICAL,HIGH"
+
+permissions:
+  contents: read
+  packages: read
+  # Required for github/codeql-action/upload-sarif to write findings
+  # to the GitHub Security tab.
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    name: Trivy scan ${{ matrix.image }}
+    # Free GitHub-hosted ARM runner on a public repo. Trivy is a
+    # registry-pull-and-scan workload, not CPU-bound.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Only the toolchain images published from THIS repo. The mirror
+        # images (gide-isabelle-source / gide-afp-source) are `FROM scratch`
+        # tarball carriers — Trivy has nothing meaningful to scan there, so
+        # they are intentionally omitted.
+        include:
+          - image: ghcr.io/darcstar-technologies/gide-z3:latest
+            category: gide-z3
+          - image: ghcr.io/darcstar-technologies/gide-cvc5:latest
+            category: gide-cvc5
+          - image: ghcr.io/darcstar-technologies/gide-yices2:latest
+            category: gide-yices2
+          - image: ghcr.io/darcstar-technologies/gide-dreal:latest
+            category: gide-dreal
+          - image: ghcr.io/darcstar-technologies/gide-apalache:latest
+            category: gide-apalache
+          - image: ghcr.io/darcstar-technologies/gide-lean4-base:latest
+            category: gide-lean4-base
+          - image: ghcr.io/darcstar-technologies/gide-isabelle-base:latest
+            category: gide-isabelle-base
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Authenticate to GHCR
+        # Optional for public packages; kept to avoid anonymous pull rate
+        # limits. Trivy picks up credentials from ~/.docker/config.json.
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ matrix.image }}
+          format: sarif
+          output: trivy-${{ matrix.category }}.sarif
+          severity: ${{ inputs.severity || 'CRITICAL,HIGH' }}
+          exit-code: '0'
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4
+        with:
+          sarif_file: trivy-${{ matrix.category }}.sarif
+          category: ${{ matrix.category }}

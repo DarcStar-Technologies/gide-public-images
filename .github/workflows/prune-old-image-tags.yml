@@ -1,0 +1,237 @@
+name: Prune old image tags
+
+# Weekly cleanup of stale per-commit (`:<40hex-sha>`) and verify-then-promote
+# (`:candidate-<sha>-<run_id>-<run_attempt>`) tags on every toolchain package
+# PUBLISHED FROM THIS repo (darcstar-technologies/gide-public-images).
+#
+# The proof-baking leaf packages (gide-lean4, gide-isabelle) and gide-ci-base
+# are pruned by the PRIVATE DarcStar-Technologies/gide repo — they are not
+# published here.
+#
+# Pruning policy (unchanged from the original):
+#   - Keep `:latest` and any non-SHA / non-candidate tag. Always.
+#   - Keep the most recent N versions overall (N=10) regardless of tag.
+#   - Delete versions tagged EXCLUSIVELY with `:<sha>` or `:candidate-…`
+#     AND older than 30 days AND outside the keep-recent-N set.
+#
+# NOTE(migration): the mirror packages gide-isabelle-source / gide-afp-source
+# use version/arch tags (e.g. `2025-2-amd64`, `afp-2026-02-06`), not sha tags,
+# so this policy would always classify them as "floating" and never prune
+# them. They are intentionally OMITTED here; if their dated tags need a
+# retention policy, add a separate age-based pruner. (TODO(migration).)
+#
+# Cadence: weekly Sunday 06:30 UTC, after the base/prover rebuild crons and
+# the Trivy scan slot.
+
+on:
+  schedule:
+    - cron: "30 6 * * 0"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Don't actually delete; just print what would be pruned"
+        required: false
+        default: "false"
+      keep_recent:
+        description: "Keep this many most-recent versions per package regardless of tags"
+        required: false
+        default: "10"
+      max_age_days:
+        description: "Delete prunable tags older than this many days"
+        required: false
+        default: "30"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Prune ${{ matrix.package }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every toolchain package whose build workflow lives in THIS repo and
+        # pushes `:<sha>` / `:candidate-…` tags.
+        package:
+          - gide-z3
+          - gide-cvc5
+          - gide-yices2
+          - gide-dreal
+          - gide-apalache
+          - gide-lean4-base
+          - gide-isabelle-base
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ORG: ${{ github.repository_owner }}
+      DRY_RUN: ${{ inputs.dry_run || 'false' }}
+      KEEP_RECENT: ${{ inputs.keep_recent || '10' }}
+      MAX_AGE_DAYS: ${{ inputs.max_age_days || '30' }}
+    steps:
+      - name: Prune stale tags for ${{ matrix.package }}
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          cutoff_epoch=$(date -u -d "${MAX_AGE_DAYS} days ago" +%s)
+          cutoff_iso=$(date -u -d "${MAX_AGE_DAYS} days ago" --iso-8601=seconds)
+          echo "Pruning ${PACKAGE} versions older than ${cutoff_iso} (keep most-recent ${KEEP_RECENT} regardless)"
+          echo "Dry-run: ${DRY_RUN}"
+
+          # Tolerate 404 on first run (package not yet published).
+          if ! gh api "/orgs/${ORG}/packages/container/${PACKAGE}" >/dev/null 2>&1; then
+            echo "::notice::Package ${PACKAGE} not found yet; nothing to prune."
+            exit 0
+          fi
+
+          gh api --paginate \
+              "/orgs/${ORG}/packages/container/${PACKAGE}/versions" \
+              --jq '[.[] | {id, created_at, tags: (.metadata.container.tags // [])}]
+                    | sort_by(.created_at) | reverse' \
+              > /tmp/versions.json
+
+          total=$(jq 'length' /tmp/versions.json)
+          echo "Total versions: ${total}"
+
+          deleted=0
+          kept_floating=0
+          kept_recent=0
+          kept_young=0
+
+          for i in $(seq 0 $((total - 1))); do
+              entry=$(jq ".[${i}]" /tmp/versions.json)
+              id=$(echo "$entry" | jq -r .id)
+              created_at=$(echo "$entry" | jq -r .created_at)
+              created_epoch=$(date -u -d "${created_at}" +%s)
+              tags_json=$(echo "$entry" | jq -c '.tags')
+              tag_count=$(echo "$entry" | jq -r '.tags | length')
+
+              # Rule 1: keep most-recent KEEP_RECENT versions regardless.
+              if [[ "${i}" -lt "${KEEP_RECENT}" ]]; then
+                  kept_recent=$((kept_recent + 1))
+                  continue
+              fi
+
+              # Rule 2: skip tag-less versions (SBOM / provenance attestations).
+              if [[ "${tag_count}" -eq 0 ]]; then
+                  continue
+              fi
+
+              # Rule 3: keep any version with a non-sha / non-candidate tag.
+              has_floating=false
+              while IFS= read -r tag; do
+                  [[ -z "${tag}" ]] && continue
+                  if [[ ! "${tag}" =~ ^[0-9a-f]{40}$ ]] && \
+                     [[ ! "${tag}" =~ ^candidate-[0-9a-f]{40}-[0-9]+-[0-9]+$ ]]; then
+                      has_floating=true
+                      break
+                  fi
+              done < <(echo "$tags_json" | jq -r '.[]?')
+              if "${has_floating}"; then
+                  kept_floating=$((kept_floating + 1))
+                  continue
+              fi
+
+              # Rule 4: only prune when older than cutoff.
+              if [[ "${created_epoch}" -ge "${cutoff_epoch}" ]]; then
+                  kept_young=$((kept_young + 1))
+                  continue
+              fi
+
+              tags_csv=$(echo "$tags_json" | jq -r 'join(",")')
+              age_days=$(( ($(date -u +%s) - created_epoch) / 86400 ))
+              if [[ "${DRY_RUN}" == "true" ]]; then
+                  echo "[DRY-RUN] Would delete version ${id} (tags: ${tags_csv}, age: ${age_days}d)"
+              else
+                  echo "Deleting version ${id} (tags: ${tags_csv}, age: ${age_days}d)"
+                  gh api -X DELETE \
+                      "/orgs/${ORG}/packages/container/${PACKAGE}/versions/${id}" \
+                      || echo "::warning::Failed to delete version ${id}; continuing"
+              fi
+              deleted=$((deleted + 1))
+          done
+
+          echo "Summary for ${PACKAGE}: deleted=${deleted} kept_recent=${kept_recent} kept_floating=${kept_floating} kept_young=${kept_young}"
+
+  prune-mirrors:
+    # The mirror packages (gide-isabelle-source / gide-afp-source) carry
+    # only version/arch/dated tags (e.g. `Isabelle2025-2-amd64`,
+    # `afp-2026-02-06`), never `:<sha>` / `:candidate-…`. The `prune` job
+    # above would classify them all as "floating" and keep them forever.
+    #
+    # SAFETY: `tools/isabelle-base.Dockerfile` does `COPY --from=` a SPECIFIC
+    # mirror tag (its `ISABELLE_VERSION` / `AFP_DATED_TAG` ARGs), and that
+    # tag is stable for ~a year. We must NEVER delete a tagged version — it
+    # may be the one the base currently builds from; deleting it breaks base
+    # rebuilds. So this job deletes ONLY *untagged* versions (the churn left
+    # behind when a monthly re-mirror re-pushes the same tag and the prior
+    # version loses its tag), older than the cutoff and outside keep-recent-N.
+    # Every tagged version is kept regardless of age.
+    name: Prune untagged mirror churn ${{ matrix.package }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - gide-isabelle-source
+          - gide-afp-source
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ORG: ${{ github.repository_owner }}
+      DRY_RUN: ${{ inputs.dry_run || 'false' }}
+      KEEP_RECENT: ${{ inputs.keep_recent || '10' }}
+      MAX_AGE_DAYS: ${{ inputs.max_age_days || '30' }}
+    steps:
+      - name: Prune untagged churn for ${{ matrix.package }}
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          cutoff_epoch=$(date -u -d "${MAX_AGE_DAYS} days ago" +%s)
+          echo "Pruning ${PACKAGE}: keep most-recent ${KEEP_RECENT} + ALL tagged versions; delete only untagged versions older than ${MAX_AGE_DAYS}d"
+          echo "Dry-run: ${DRY_RUN}"
+
+          if ! gh api "/orgs/${ORG}/packages/container/${PACKAGE}" >/dev/null 2>&1; then
+            echo "::notice::Package ${PACKAGE} not found yet; nothing to prune."
+            exit 0
+          fi
+
+          gh api --paginate \
+              "/orgs/${ORG}/packages/container/${PACKAGE}/versions" \
+              --jq '[.[] | {id, created_at, tags: (.metadata.container.tags // [])}]
+                    | sort_by(.created_at) | reverse' \
+              > /tmp/mirror-versions.json
+
+          total=$(jq 'length' /tmp/mirror-versions.json)
+          deleted=0; kept_recent=0; kept_tagged=0; kept_young=0
+          for i in $(seq 0 $((total - 1))); do
+              entry=$(jq ".[${i}]" /tmp/mirror-versions.json)
+              id=$(echo "$entry" | jq -r .id)
+              created_epoch=$(date -u -d "$(echo "$entry" | jq -r .created_at)" +%s)
+              tag_count=$(echo "$entry" | jq -r '.tags | length')
+
+              # Keep most-recent N regardless.
+              if [[ "${i}" -lt "${KEEP_RECENT}" ]]; then kept_recent=$((kept_recent+1)); continue; fi
+              # NEVER delete a tagged version — it may be the base's FROM tag.
+              if [[ "${tag_count}" -gt 0 ]]; then kept_tagged=$((kept_tagged+1)); continue; fi
+              # Untagged + beyond recent-N: delete only once older than cutoff.
+              if [[ "${created_epoch}" -ge "${cutoff_epoch}" ]]; then kept_young=$((kept_young+1)); continue; fi
+
+              if [[ "${DRY_RUN}" == "true" ]]; then
+                  echo "[DRY-RUN] Would delete untagged version ${id}"
+              else
+                  echo "Deleting untagged version ${id}"
+                  gh api -X DELETE \
+                      "/orgs/${ORG}/packages/container/${PACKAGE}/versions/${id}" \
+                      || echo "::warning::Failed to delete version ${id}; continuing"
+              fi
+              deleted=$((deleted+1))
+          done
+          echo "Summary for ${PACKAGE}: deleted=${deleted} kept_recent=${kept_recent} kept_tagged=${kept_tagged} kept_young=${kept_young}"
