@@ -28,6 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     mkdir -p /var/apalache && chmod 0777 /var/apalache && \
     apt-get purge -y curl && apt-get autoremove -y && \
     rm -rf /tmp/apalache.tgz /var/lib/apt/lists/*
+LABEL org.opencontainers.image.source="https://github.com/DarcStar-Technologies/gide-public-images" \
+      org.opencontainers.image.description="Apalache TLA+ model checker"
 # Match the entrypoint the existing host wrapper expects:
 # `docker run ... <image> version`, `docker run ... <image> check ...`.
 ENTRYPOINT ["apalache"]

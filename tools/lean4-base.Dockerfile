@@ -47,6 +47,12 @@ RUN printf 'import Lake\nopen Lake DSL\n\npackage «gide-proofs»\n\nrequire mat
 # wrapper invocation.
 RUN lean --version
 
+# OCI metadata. Placed after the Mathlib bake so editing labels (or
+# patching anything below) never invalidates the ~30-60 min build.
+# `image.source` links this package to its repo on GHCR.
+LABEL org.opencontainers.image.source="https://github.com/DarcStar-Technologies/gide-public-images" \
+      org.opencontainers.image.description="Lean4 toolchain + pre-compiled Mathlib4 (toolchain base)"
+
 # Default entrypoint matches the overlay so `docker run gide-lean4-base`
 # behaves identically to the published `gide-lean4` image when no
 # Shared bake is needed (e.g. ad-hoc Mathlib-only experiments).

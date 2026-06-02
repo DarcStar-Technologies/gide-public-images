@@ -17,4 +17,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     chmod +x /usr/local/bin/cvc5 && \
     apt-get purge -y curl unzip && apt-get autoremove -y && \
     rm -rf "/tmp/cvc5.zip" "/opt/cvc5-Linux-${CVC5_PLAT}-static" /var/lib/apt/lists/*
+LABEL org.opencontainers.image.source="https://github.com/DarcStar-Technologies/gide-public-images" \
+      org.opencontainers.image.description="cvc5 SMT solver"
 ENTRYPOINT ["cvc5"]
