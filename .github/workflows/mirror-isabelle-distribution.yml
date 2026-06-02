@@ -147,19 +147,16 @@ jobs:
           input_arches="${{ github.event.inputs.mirror_arches || '' }}"
 
           isabelle_version="${input_isabelle:-$(extract_arg ISABELLE_VERSION)}"
-          afp_url="${input_afp_url:-$(extract_arg AFP_URL)}"
           afp_sha256="${input_afp_sha:-$(extract_arg AFP_SHA256)}"
           afp_dirname="$(extract_arg AFP_DIRNAME)"
 
-          # Derive afp_dated_tag: prefer explicit input, else strip
-          # `https://isa-afp.org/release/` prefix and `.tar.gz` suffix
-          # from afp_url to get e.g. `afp-2026-02-06`.
-          if [[ -n "$input_afp_tag" ]]; then
-            afp_dated_tag="$input_afp_tag"
-          else
-            afp_dated_tag="${afp_url##*/}"
-            afp_dated_tag="${afp_dated_tag%.tar.gz}"
-          fi
+          # AFP is pinned in-tree by its dated tag (ARG AFP_DATED_TAG, e.g.
+          # `afp-2026-02-06`); a workflow_dispatch afp_dated_tag input
+          # overrides it. The tarball URL is derived from the dated tag
+          # (`https://isa-afp.org/release/<tag>.tar.gz`) unless an explicit
+          # afp_url input is supplied.
+          afp_dated_tag="${input_afp_tag:-$(extract_arg AFP_DATED_TAG)}"
+          afp_url="${input_afp_url:-https://isa-afp.org/release/${afp_dated_tag}.tar.gz}"
 
           # mirror_arches is a JSON array string (default
           # `["amd64","arm64"]`), passed through to the matrix job via
