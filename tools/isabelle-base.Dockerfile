@@ -1,9 +1,17 @@
 # Isabelle BASE image: Ubuntu + Isabelle distribution + AFP source +
 # pre-baked Complex_Bounded_Operators heap chain.
 #
-# This is the slow, upstream-driven layer (CBO heap is 90-150 min cold
-# per arch). It is rebuilt when `ISABELLE_VERSION` / `AFP_*` bump, when
-# this Dockerfile changes, or on a weekly cron for Ubuntu CVE refreshes.
+# This is the slow, upstream-driven layer (CBO heap is 90-150 min cold).
+# The expensive bake lives in the `heap-builder` stage on its own pinned
+# Ubuntu base; the shipped image is a THIN final stage that COPYs the
+# baked Isabelle install + heaps onto a separately-pinned, CVE-patched
+# Ubuntu runtime base. So a weekly Ubuntu CVE bump (runtime base only)
+# rebuilds just the thin final stage and cache-hits the heap — it does
+# NOT re-run the 90-150 min bake. The bake re-runs only when
+# `ISABELLE_VERSION` / `AFP_*` bump, the heap-builder base is bumped, or
+# the bake recipe changes. Registry buildcache `mode=max` persists all
+# stages, so the heap-builder stage is restored from cache across
+# runtime-only changes.
 #
 # The theorem-augmented overlay (`tools/isabelle.Dockerfile`) bakes the
 # `proofs/Layer1..Layer5` source tree + the GIDE per-layer session heap
@@ -85,8 +93,13 @@ FROM ${ISABELLE_MIRROR_IMAGE}:${ISABELLE_VERSION}-${TARGETARCH} AS isabelle-mirr
 # suffix); the wrapper itself is still a multi-platform manifest list.
 FROM ${AFP_MIRROR_IMAGE}:${AFP_DATED_TAG} AS afp-mirror
 
-# Stage 3: final image. Ubuntu + extract tarballs + CBO heap bake.
-FROM ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
+# Stage 3: heap-builder. Extracts the tarballs and runs the slow CBO heap
+# bake. Pinned to its OWN Ubuntu digest, bumped only on an Isabelle/AFP
+# version change or a major Ubuntu jump — NOT routine CVE refreshes (those
+# move only the runtime base in stage 4). Keeping this digest stable is
+# what lets the registry buildcache skip the 90-150 min bake when only the
+# runtime base changes. This stage is never shipped.
+FROM ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64 AS heap-builder
 ARG TARGETARCH
 ARG ISABELLE_VERSION
 ARG ISABELLE_SHA256
@@ -174,4 +187,33 @@ RUN mkdir -p ~/.isabelle/${ISABELLE_VERSION}/etc && \
 # this hardware actually needs while still surfacing a real hang.
 RUN isabelle build -j 1 -o timeout_scale=2.0 -b Complex_Bounded_Operators
 
+# Stage 4: shipped image. Thin Ubuntu runtime + the baked Isabelle install
+# and CBO heap COPYed from the builder. This is the ONLY stage on a
+# CVE-patched base, so an Ubuntu digest bump here rebuilds just these few
+# layers (cache-hitting the heap-builder stage above) instead of re-running
+# the 90-150 min CBO bake. Runtime deps only: fontconfig + libgomp1 are
+# Isabelle runtime requirements; ca-certificates for completeness.
+#
+# The `# renovate-runtime-base ubuntu` marker below is what the custom
+# Renovate manager in renovate.json targets — the built-in dockerfile
+# manager is disabled for this file so it can't bump BOTH ubuntu pins (and
+# re-invalidate the cached bake). Only this runtime digest auto-updates.
+# renovate-runtime-base ubuntu
+FROM ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates fontconfig libgomp1 && \
+    useradd -m isabelle && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
+# Bring over the baked Isabelle install + AFP (/opt) and the per-user
+# config + saved heaps (~/.isabelle). --chown re-stamps ownership to the
+# runtime image's isabelle user.
+COPY --from=heap-builder --chown=isabelle:isabelle /opt /opt
+COPY --from=heap-builder --chown=isabelle:isabelle /home/isabelle/.isabelle /home/isabelle/.isabelle
+
+ENV PATH="/opt/isabelle/bin:${PATH}"
+USER isabelle
+WORKDIR /home/isabelle
 ENTRYPOINT ["isabelle"]

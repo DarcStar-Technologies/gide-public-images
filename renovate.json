@@ -24,6 +24,12 @@
       "description": "Group the Lean4 toolchain + Mathlib bumps so a coordinated base move lands as one reviewable PR.",
       "matchFileNames": ["tools/lean4-base.Dockerfile"],
       "groupName": "lean4 toolchain"
+    },
+    {
+      "description": "Isabelle base has TWO `ubuntu` FROMs (a stable heap-builder base + a CVE-patched runtime base). The built-in dockerfile manager would bump both to the same digest, re-invalidating the cached 90-150 min CBO bake on every CVE refresh. Disable it here; the runtime base is bumped by the marked customManager below, and the heap-builder base is pinned (bumped manually on Isabelle/AFP/major-OS changes).",
+      "matchManagers": ["dockerfile"],
+      "matchFileNames": ["tools/isabelle-base.Dockerfile"],
+      "enabled": false
     }
   ],
   "customManagers": [
@@ -94,6 +100,15 @@
       "datasourceTemplate": "github-tags",
       "depNameTemplate": "leanprover-community/mathlib4",
       "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Isabelle base RUNTIME ubuntu digest only (CVE patches). Targets the FROM tagged `# renovate-runtime-base ubuntu` in tools/isabelle-base.Dockerfile; the heap-builder base FROM is intentionally left untracked so a routine runtime CVE bump does not re-run the cached CBO bake. The built-in dockerfile manager is disabled for this file via packageRules.",
+      "managerFilePatterns": ["/^tools/isabelle-base\\.Dockerfile$/"],
+      "matchStrings": ["# renovate-runtime-base ubuntu\\nFROM ubuntu:26\\.04@sha256:(?<currentDigest>[a-f0-9]{64})"],
+      "currentValueTemplate": "26.04",
+      "depNameTemplate": "ubuntu",
+      "datasourceTemplate": "docker"
     }
   ]
 }
