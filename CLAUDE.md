@@ -75,6 +75,15 @@ then promote to `:latest` + `:<sha>` only on smoke-green.
 - **Registry-backed buildkit cache, not `type=gha`.** The Mathlib (~14 GB) and
   Isabelle/CBO (~12 GB) layers exceed GitHub Actions' 10 GB/repo cache cap, so
   the base builds use `type=registry,ref=…:buildcache-<arch>`. Keep it that way.
+- **CI runs on free standard runners — keep it that way.** Every `runs-on:` is
+  `ubuntu-24.04` (amd64) or `ubuntu-24.04-arm` (arm64) — standard GitHub-hosted
+  runners, which are free with unlimited minutes on public repos (this is part
+  of why the repo is public). The Mathlib/CBO cold bakes fit the standard runner
+  (4 vCPU / ~16 GB) within the 6h job cap. **Larger runners (`*-cores`/xlarge),
+  self-hosted, and macOS/Windows runners are billed *even on public repos*** —
+  don't introduce them (the private `gide` repo's billed `ARM 4-core` line is the
+  cautionary example). Runner-sizing `# TODO(migration):` notes are about
+  confirming the standard runner suffices, not licence to switch to a billed one.
 - **`isabelle-base` is amd64-only** (bundled PolyML SIGILLs on ARM). Don't add
   `linux/arm64` to it without rebuilding PolyML from source.
 - **Action pins** use the repo-canonical `docker/build-push-action@…# v7` SHA;
