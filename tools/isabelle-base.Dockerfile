@@ -133,15 +133,15 @@ WORKDIR /home/isabelle
 #
 # Force 64-bit PolyML (`x86_64-linux`; default picks `x86_64_32-linux`
 # which caps virtual address space at 4 GB and OOMs on the CBO heap-save
-# step). 64-bit heaps are ~50% larger so HOL-Analysis peak hits ~5-6 GB
-# and image build needs a runner with >= 12 GB RAM. The
-# `build-isabelle-base-image.yml` workflow specifies a large runner accordingly.
+# step). 64-bit heaps are ~50% larger so HOL-Analysis peak hits ~5-6 GB.
+# The CBO bake below runs `-j 1` (one session at a time) so peak stays
+# around 6 GB — comfortable headroom on the free GitHub-hosted
+# `ubuntu-24.04` runner (16 GB) that `build-isabelle-base-image.yml` uses.
 RUN mkdir -p ~/.isabelle/${ISABELLE_VERSION}/etc && \
     echo "/opt/afp/thys" > ~/.isabelle/${ISABELLE_VERSION}/ROOTS && \
     case "$TARGETARCH" in \
       amd64) ML_PLATFORM="x86_64-linux" ;; \
-      arm64) ML_PLATFORM="arm64-linux" ;; \
-      *) echo "Unsupported TARGETARCH: ${TARGETARCH:-<unset>}" >&2; exit 1 ;; \
+      *) echo "isabelle-base is amd64-only (bundled PolyML SIGILLs on ${TARGETARCH:-<unset>}); refusing to build" >&2; exit 1 ;; \
     esac && \
     printf '%s\n' \
         "ML_PLATFORM=\"${ML_PLATFORM}\"" \
@@ -154,8 +154,9 @@ RUN mkdir -p ~/.isabelle/${ISABELLE_VERSION}/etc && \
 # Hilbert / cblinfun / selfadjoint / unitary machinery (T008 part-(a)
 # chain mirror, future graduations) can `imports
 # Complex_Bounded_Operators.<...>` without rebuilding the heap on every
-# CI invocation. `-j 2` runs at most 2 sessions in parallel, so peak
-# memory stays around 12 GB (2 x 6 GB heap cap). Cold build ~90-150 min;
+# CI invocation. `-j 1` runs sessions one at a time, so peak memory stays
+# around 6 GB (one 6 GB heap cap) — safe on the free 16 GB runner. Cold
+# build ~90-150 min (a little longer than `-j 2`, traded for headroom);
 # warm rebuilds (Buildx GHA cache) hit the cached layer. Issue #1022.
 #
 # `-o timeout_scale=2.0` doubles all declared session timeouts so the
@@ -165,6 +166,6 @@ RUN mkdir -p ~/.isabelle/${ISABELLE_VERSION}/etc && \
 # slower), which makes CBO need ~41 min wall and trip the declared
 # timeout. Doubling gives a 60 min ceiling, comfortably above what
 # this hardware actually needs while still surfacing a real hang.
-RUN isabelle build -j 2 -o timeout_scale=2.0 -b Complex_Bounded_Operators
+RUN isabelle build -j 1 -o timeout_scale=2.0 -b Complex_Bounded_Operators
 
 ENTRYPOINT ["isabelle"]

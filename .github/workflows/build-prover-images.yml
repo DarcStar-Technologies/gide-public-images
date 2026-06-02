@@ -108,18 +108,23 @@ jobs:
           - prover: z3
             dockerfile: tools/z3.Dockerfile
             platforms: linux/amd64,linux/arm64
+            smoke: "--version"
           - prover: cvc5
             dockerfile: tools/cvc5.Dockerfile
             platforms: linux/amd64,linux/arm64
+            smoke: "--version"
           - prover: apalache
             dockerfile: tools/apalache.Dockerfile
             platforms: linux/amd64,linux/arm64
+            smoke: "version"
           - prover: yices2
             dockerfile: tools/yices2.Dockerfile
             platforms: linux/amd64
+            smoke: "--version"
           - prover: dreal
             dockerfile: tools/dreal.Dockerfile
             platforms: linux/amd64
+            smoke: "--version"
     # Cost: small prover images (download + apt-extract + small RUN
     # chain) don't benefit much from Blacksmith's sticky-disk Docker
     # Layer Cache; warm GHA cache (`type=gha,mode=max`, configured
@@ -179,10 +184,12 @@ jobs:
           sbom: true
 
       - name: Verify manifest matches advertised platforms
-        # Belt-and-braces: confirm the freshly-pushed `:latest`
-        # manifest advertises every platform we built for. Catches a
-        # future regression where someone accidentally drops
-        # `linux/arm64` from a prover that should still publish it.
+        # Post-push sanity check: confirm the freshly-pushed `:latest`
+        # manifest advertises every platform we built for. This catches a
+        # mangled or partial multi-arch push (e.g. a manifest that lost an
+        # arch during merge/attestation), NOT an intentional matrix edit —
+        # `PLATFORMS` is read from the same `matrix.platforms` we build
+        # from, so dropping a platform from the matrix drops it here too.
         env:
           IMAGE: ghcr.io/darcstar-technologies/gide-${{ matrix.prover }}
           PLATFORMS: ${{ matrix.platforms }}
@@ -196,6 +203,19 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Runtime smoke (amd64)
+        # The manifest check above only proves the image exists with the
+        # right platforms — not that the solver actually runs. Pull the
+        # just-pushed image and run its version subcommand. amd64 only
+        # (the runner's native arch); multi-arch images resolve to it.
+        env:
+          IMAGE: ghcr.io/darcstar-technologies/gide-${{ matrix.prover }}
+          SHA: ${{ github.sha }}
+          SMOKE: ${{ matrix.smoke }}
+        run: |
+          set -euo pipefail
+          docker run --rm "${IMAGE}:${SHA}" "${SMOKE}"
 
   smoke-validate-pr:
     # PR-time gate: build the Dockerfile with `push: false` so a
@@ -211,18 +231,23 @@ jobs:
           - prover: z3
             dockerfile: tools/z3.Dockerfile
             platforms: linux/amd64,linux/arm64
+            smoke: "--version"
           - prover: cvc5
             dockerfile: tools/cvc5.Dockerfile
             platforms: linux/amd64,linux/arm64
+            smoke: "--version"
           - prover: apalache
             dockerfile: tools/apalache.Dockerfile
             platforms: linux/amd64,linux/arm64
+            smoke: "version"
           - prover: yices2
             dockerfile: tools/yices2.Dockerfile
             platforms: linux/amd64
+            smoke: "--version"
           - prover: dreal
             dockerfile: tools/dreal.Dockerfile
             platforms: linux/amd64
+            smoke: "--version"
     # Cost: free GitHub-hosted x86 mirrors the publish-path runner
     # so PR smoke-validate uses the same warm GHA cache scope and
     # the same toolchain as the publish path.
@@ -245,3 +270,25 @@ jobs:
           platforms: ${{ matrix.platforms }}
           push: false
           cache-from: type=gha,scope=prover-${{ matrix.prover }}
+
+      - name: Build amd64 image for runtime smoke
+        # The multi-arch validate above can't `load` (buildx refuses to
+        # load a multi-platform result), so build amd64 alone with
+        # `load: true` to get a runnable local image. Warm GHA cache from
+        # the step above makes this near-free.
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          load: true
+          tags: gide-${{ matrix.prover }}:smoke
+          cache-from: type=gha,scope=prover-${{ matrix.prover }}
+
+      - name: Runtime smoke (amd64)
+        env:
+          IMAGE: gide-${{ matrix.prover }}:smoke
+          SMOKE: ${{ matrix.smoke }}
+        run: |
+          set -euo pipefail
+          docker run --rm "${IMAGE}" "${SMOKE}"

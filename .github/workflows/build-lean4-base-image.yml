@@ -161,9 +161,16 @@ jobs:
           # gives a real warm path.
           cache-from: type=registry,ref=${{ env.BASE_IMAGE }}:buildcache-${{ matrix.arch }}
           cache-to: type=registry,ref=${{ env.BASE_IMAGE }}:buildcache-${{ matrix.arch }},mode=max
-          # SLSA provenance + SPDX SBOM attestations per-arch.
-          provenance: mode=max
-          sbom: true
+          # No provenance/SBOM here: with `push-by-digest=true` the
+          # `digest` output must be a plain image manifest so the merge
+          # job's `imagetools create` can stitch the two arches into one
+          # manifest list. mode=max attestations would wrap each arch in
+          # an index and corrupt that merge (a broken multi-arch
+          # `:latest`). If SLSA attestation on this base is required,
+          # switch to a direct multi-arch `push: true` build like the
+          # isabelle / prover images.
+          provenance: false
+          sbom: false
 
       - name: Export digest as artifact
         env:
