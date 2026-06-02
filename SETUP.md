@@ -17,15 +17,17 @@ Assumes the `gh` CLI authenticated to the `darcstar-technologies` org with
 > amd64+arm64). Every image carries OCI `image.source`/`description` labels.
 >
 > The steps below are retained as the operator runbook for re-bootstrapping or
-> onboarding a new maintainer; per-step status is marked inline. **One item
-> remains open:** code scanning (step 1) is not yet enabled, so
-> `scan-published-images.yml`'s SARIF upload will 403 until it is.
+> onboarding a new maintainer; per-step status is marked inline. Code scanning
+> is enabled (CodeQL default setup for `actions`) and `scan-published-images.yml`
+> was verified uploading Trivy SARIF for all 7 toolchain images to the Security
+> tab — no items remain open.
 
 ## 1. Repository settings (Settings →)
 
-> **Status:** ✅ branch protection on `main`, LICENSE (MIT), and Actions/fork
-> settings done. ⚠️ **Code scanning still disabled** — enable it before relying
-> on `scan-published-images.yml` (its `upload-sarif` 403s without it).
+> **Status:** ✅ all done — branch protection on `main`, LICENSE (MIT),
+> Actions/fork settings, and **code scanning** (CodeQL default setup for
+> `actions`). `scan-published-images.yml` was verified uploading Trivy SARIF for
+> all 7 toolchain images to the Security tab (no `upload-sarif` 403).
 
 - **Actions → General → Workflow permissions:** the default (read-only) is fine
   — every workflow declares its own `permissions:` block (incl. `packages:
