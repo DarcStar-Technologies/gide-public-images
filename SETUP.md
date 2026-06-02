@@ -8,7 +8,24 @@ what each image is and `MIGRATION-NOTES.md` for the broader migration context.
 Assumes the `gh` CLI authenticated to the `darcstar-technologies` org with
 `admin:org` + `write:packages` scopes.
 
+> ## ✅ Bootstrap COMPLETE — 2026-06-02
+>
+> All 9 packages are published, smoke-promoted to `:latest`, and **public** —
+> anonymous (credential-free) `docker pull` was verified for every package and
+> the per-arch platforms match the build matrix (`gide-isabelle-base`,
+> `gide-yices2`, `gide-dreal` are amd64-only by design; the rest are
+> amd64+arm64). Every image carries OCI `image.source`/`description` labels.
+>
+> The steps below are retained as the operator runbook for re-bootstrapping or
+> onboarding a new maintainer; per-step status is marked inline. **One item
+> remains open:** code scanning (step 1) is not yet enabled, so
+> `scan-published-images.yml`'s SARIF upload will 403 until it is.
+
 ## 1. Repository settings (Settings →)
+
+> **Status:** ✅ branch protection on `main`, LICENSE (MIT), and Actions/fork
+> settings done. ⚠️ **Code scanning still disabled** — enable it before relying
+> on `scan-published-images.yml` (its `upload-sarif` 403s without it).
 
 - **Actions → General → Workflow permissions:** the default (read-only) is fine
   — every workflow declares its own `permissions:` block (incl. `packages:
@@ -25,6 +42,8 @@ Assumes the `gh` CLI authenticated to the `darcstar-technologies` org with
   before first publish (recommend Apache-2.0 or MIT — build infra, no GIDE IP).
 
 ## 2. GHCR packages — visibility + access
+
+> **Status:** ✅ all 9 packages flipped to **Public** and anonymously pullable.
 
 These 9 packages publish to the org-scoped namespace
 `ghcr.io/darcstar-technologies/<image>`:
@@ -47,6 +66,9 @@ default) — then flip each to **Public** in the same Danger Zone.
 > Visibility is a one-time manual flip per package; CI cannot set it.
 
 ## 3. First publish — DEPENDENCY ORDER MATTERS
+
+> **Status:** ✅ first publish done in this order; all builds smoke-green and
+> promoted to `:latest`.
 
 `build-isabelle-base-image.yml` does `COPY --from=` the two mirror images, so
 publish in this order:
@@ -71,6 +93,15 @@ Flip each package to Public once it first publishes.
 
 ## 4. Verify (must pass WITHOUT auth once public)
 
+> **Status:** ✅ verified 2026-06-02 — all 9 packages return a `200` on an
+> anonymous manifest pull (including the two `FROM scratch` source mirrors,
+> which the loop below omits because they carry versioned tags, not `:latest`).
+> Where no Docker/buildx daemon is available, the equivalent check is an
+> anonymous registry-API pull: grab a token from
+> `https://ghcr.io/token?service=ghcr.io&scope=repository:darcstar-technologies/<img>:pull`,
+> then `GET https://ghcr.io/v2/darcstar-technologies/<img>/manifests/<tag>` with
+> that bearer token — a `200` proves credential-free pullability.
+
 ```bash
 for img in gide-lean4-base gide-isabelle-base gide-z3 gide-cvc5 \
            gide-yices2 gide-dreal gide-apalache; do
@@ -83,6 +114,11 @@ A `FAIL` here usually means the package is still private (step 2) or the build
 hasn't published yet (step 3).
 
 ## 5. Renovate
+
+> **Status:** ✅ `renovate.json` is committed and working (incl. the
+> isabelle-base runtime-base customManager so CVE digest bumps skip the heap
+> bake). ⚠️ Onboarding the repo to the org Renovate app is the operator's
+> standing action if not already done.
 
 Add this repo to the org Renovate config or install the Renovate GitHub App.
 `renovate.json` ships with working customManagers (ported from the private repo)
@@ -103,6 +139,9 @@ running the mirror workflow to publish the new source tags — see the bump-orde
 note in `build-isabelle-base-image.yml`.
 
 ## 6. Hand-off to the private repo
+
+> **Status:** 🔜 unblocked — step 4 is green, so the private cleanup PR may now
+> proceed. This is the next action, owned by the private `gide` repo.
 
 Only after step 4 is green: the private `gide` repo applies its gated cleanup
 PR (delete the migrated builds, rewire the overlays to `FROM` these published
