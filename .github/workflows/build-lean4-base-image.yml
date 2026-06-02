@@ -47,11 +47,9 @@ name: Build & Push gide-lean4-base Image
 # manifest-merge, avoiding the 3-5x QEMU emulation tax on the Mathlib
 # bake.
 #
-# Runners: GitHub-hosted (free for public repos). Mathlib cold builds
-# are ~30-60 min/arch, comfortably within the 6h public-runner job
-# limit. If a future Mathlib bump pushes cold builds toward that limit,
-# switch the build/smoke jobs to a larger GitHub-hosted "larger runner"
-# label from the org runner group — see the per-job `runs-on` below.
+# Runners: GitHub-hosted standard runners (free for public repos).
+# Mathlib cold builds are ~30-60 min/arch, comfortably within the 6h
+# public-runner job limit.
 
 on:
   push:
@@ -111,11 +109,10 @@ jobs:
             runner: ubuntu-24.04-arm
             platform: linux/arm64
     runs-on: ${{ matrix.runner }}
-    # TODO(migration): GitHub-hosted runners cap at 6h/job; Mathlib cold
-    # builds are ~30-60 min/arch so 120 is generous headroom. Verify the
-    # standard runner (ubuntu-24.04 = ~16 GB RAM) is enough for the
-    # Mathlib bake under cold cache; bump to a larger runner label if
-    # OOM appears.
+    # GitHub-hosted runners cap at 6h/job; Mathlib cold builds are
+    # ~30-60 min/arch, so 120 is generous headroom. The standard runner
+    # (ubuntu-24.04 = ~16 GB RAM) handles the Mathlib bake under cold
+    # cache.
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
