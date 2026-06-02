@@ -75,6 +75,10 @@ on:
         description: "Isabelle version tag (default: image ARG default)"
         required: false
         default: ""
+      isabelle_sha256:
+        description: "Isabelle tarball SHA-256 (must match isabelle_version; default: image ARG default)"
+        required: false
+        default: ""
       afp_url:
         description: "AFP source tarball URL (default: image ARG default)"
         required: false
@@ -144,6 +148,7 @@ jobs:
         id: args
         env:
           ISABELLE_VERSION: ${{ inputs.isabelle_version }}
+          ISABELLE_SHA256: ${{ inputs.isabelle_sha256 }}
           AFP_URL: ${{ inputs.afp_url }}
           AFP_SHA256: ${{ inputs.afp_sha256 }}
           AFP_DIRNAME: ${{ inputs.afp_dirname }}
@@ -166,6 +171,7 @@ jobs:
           {
             echo 'build_args<<EOF_BA'
             [ -n "$ISABELLE_VERSION" ] && echo "ISABELLE_VERSION=$ISABELLE_VERSION"
+            [ -n "$ISABELLE_SHA256" ]  && echo "ISABELLE_SHA256=$ISABELLE_SHA256"
             [ -n "$AFP_DATED_TAG" ]    && echo "AFP_DATED_TAG=$AFP_DATED_TAG"
             [ -n "$AFP_SHA256" ]       && echo "AFP_SHA256=$AFP_SHA256"
             [ -n "$AFP_DIRNAME" ]      && echo "AFP_DIRNAME=$AFP_DIRNAME"
