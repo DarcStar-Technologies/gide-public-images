@@ -200,6 +200,15 @@ RUN isabelle build -j 1 -o timeout_scale=2.0 -b Complex_Bounded_Operators
 # re-invalidate the cached bake). Only this runtime digest auto-updates.
 # renovate-runtime-base ubuntu
 FROM ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
+
+# OCI image metadata. `image.source` links this package to its repo on
+# GHCR; `image.description` documents the contents. Living in the thin
+# final stage means editing labels (or patching the runtime base) never
+# invalidates the cached heap-builder, so the 90-150 min CBO bake is
+# skipped on a runtime-only change.
+LABEL org.opencontainers.image.source="https://github.com/DarcStar-Technologies/gide-public-images" \
+      org.opencontainers.image.description="Isabelle + AFP + pre-baked Complex_Bounded_Operators heap (toolchain base; amd64)"
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       ca-certificates fontconfig libgomp1 && \
