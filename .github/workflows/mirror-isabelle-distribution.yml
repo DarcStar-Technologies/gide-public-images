@@ -130,6 +130,19 @@ jobs:
 
       - name: Resolve pins from inputs or in-tree Dockerfile
         id: pins
+        env:
+          # Pass dispatch inputs via env, never inline `${{ }}` in the
+          # script. `mirror_arches` is a JSON array whose embedded
+          # double-quotes collide with the shell's own quoting when
+          # substituted inline (`"["amd64","arm64"]"` -> `[amd64,arm64]`),
+          # producing invalid JSON that breaks the Isabelle matrix's
+          # `fromJSON` and the summary's `jq`. Reading from env keeps the
+          # value intact (and avoids input-injection into the script).
+          INPUT_ISABELLE: ${{ github.event.inputs.isabelle_version }}
+          INPUT_AFP_TAG: ${{ github.event.inputs.afp_dated_tag }}
+          INPUT_AFP_URL: ${{ github.event.inputs.afp_url }}
+          INPUT_AFP_SHA: ${{ github.event.inputs.afp_sha256 }}
+          INPUT_ARCHES: ${{ github.event.inputs.mirror_arches }}
         run: |
           set -euo pipefail
           # Extract the in-tree ARG defaults from tools/isabelle-base.Dockerfile.
@@ -140,11 +153,11 @@ jobs:
             grep -m1 "^ARG ${name}=" tools/isabelle-base.Dockerfile | sed -E "s|^ARG ${name}=||"
           }
 
-          input_isabelle="${{ github.event.inputs.isabelle_version || '' }}"
-          input_afp_tag="${{ github.event.inputs.afp_dated_tag || '' }}"
-          input_afp_url="${{ github.event.inputs.afp_url || '' }}"
-          input_afp_sha="${{ github.event.inputs.afp_sha256 || '' }}"
-          input_arches="${{ github.event.inputs.mirror_arches || '' }}"
+          input_isabelle="${INPUT_ISABELLE:-}"
+          input_afp_tag="${INPUT_AFP_TAG:-}"
+          input_afp_url="${INPUT_AFP_URL:-}"
+          input_afp_sha="${INPUT_AFP_SHA:-}"
+          input_arches="${INPUT_ARCHES:-}"
 
           isabelle_version="${input_isabelle:-$(extract_arg ISABELLE_VERSION)}"
           afp_sha256="${input_afp_sha:-$(extract_arg AFP_SHA256)}"
