@@ -1,0 +1,48 @@
+name: Lint workflows
+
+# Static validation gate for the GitHub Actions workflows in this repo,
+# run via actionlint (https://github.com/rhysd/actionlint). It checks:
+#   - workflow schema (keys, types, trigger shapes)
+#   - expression context availability — e.g. using the `env` context in a
+#     job-level `env:` where it is NOT available, which GitHub surfaces as
+#     an "Invalid workflow file" error only after the file reaches the
+#     default branch. The actionlint image also bundles shellcheck, so
+#     `run:` blocks are linted too.
+#
+# Why this is the first gate: the build/mirror workflows here are
+# expensive (Mathlib/CBO bakes, multi-GB pushes) and several are
+# main/dispatch-only, so a schema error can sit undetected until a real
+# publish run fails at startup. Catching it on the PR that touches a
+# workflow is far cheaper than discovering it mid-bootstrap.
+#
+# Pinning: actions and the actionlint image are pinned (SHA / digest) to
+# match the repo-wide supply-chain convention. Bump the `1.7.x` tag and
+# its `@sha256:` digest together.
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      # rhysd/actionlint:1.7.12 (multi-arch index digest). The image
+      # entrypoint is actionlint; with no path args it discovers and lints
+      # every workflow under .github/workflows/.
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+        with:
+          args: -color
