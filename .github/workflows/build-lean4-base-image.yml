@@ -256,10 +256,15 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/smoke
           cat > /tmp/smoke/Smoke.lean <<'EOF_SMOKE'
-          -- Self-contained toolchain smoke: proves that Mathlib resolves
-          -- inside the candidate base image and that elaboration plus a
-          -- couple of trivial tactics work. No GIDE proof content.
-          import Mathlib.Data.Real.Basic
+          -- Self-contained toolchain smoke: proves that the full Mathlib
+          -- library resolves inside the candidate base image and that
+          -- elaboration plus a couple of trivial tactics (linarith, rfl)
+          -- work. `import Mathlib` pulls the whole library (the base ships
+          -- its pre-built oleans) and brings in the tactic namespace — a
+          -- narrower import like `Mathlib.Data.Real.Basic` does NOT make
+          -- `linarith` available, which read as "unknown tactic". No GIDE
+          -- proof content.
+          import Mathlib
 
           theorem smoke (x : ℝ) (h : x ≥ 0) : x + 1 ≥ 1 := by linarith
 
