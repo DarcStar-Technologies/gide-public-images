@@ -21,4 +21,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     ln -s /opt/z3/bin/z3 /usr/local/bin/z3 && \
     apt-get purge -y curl unzip && apt-get autoremove -y && \
     rm -rf /tmp/z3.zip /var/lib/apt/lists/*
+LABEL org.opencontainers.image.source="https://github.com/DarcStar-Technologies/gide-public-images" \
+      org.opencontainers.image.description="Z3 SMT solver"
 ENTRYPOINT ["z3"]

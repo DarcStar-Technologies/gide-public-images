@@ -17,4 +17,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     ln -s /opt/yices-${YICES2_VERSION}/bin/yices-smt2 /usr/local/bin/yices-smt2 && \
     apt-get purge -y curl && apt-get autoremove -y && \
     rm -rf /tmp/yices2.tar.gz /var/lib/apt/lists/*
+LABEL org.opencontainers.image.source="https://github.com/DarcStar-Technologies/gide-public-images" \
+      org.opencontainers.image.description="Yices2 SMT solver"
 ENTRYPOINT ["yices-smt2"]

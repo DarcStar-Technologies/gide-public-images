@@ -65,4 +65,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     apt-get purge -y curl gnupg && \
     apt-get autoremove -y && \
     rm -rf /tmp/dreal.deb /var/lib/apt/lists/*
+LABEL org.opencontainers.image.source="https://github.com/DarcStar-Technologies/gide-public-images" \
+      org.opencontainers.image.description="dReal delta-complete SMT solver"
 ENTRYPOINT ["dreal"]
