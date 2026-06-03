@@ -117,12 +117,22 @@ hasn't published yet (step 3).
 
 ## 5. Renovate
 
-> **Status:** ✅ `renovate.json` is committed and working (incl. the
+> **Status:** ✅ `renovate.json` is committed and correct (incl. the
 > isabelle-base runtime-base customManager so CVE digest bumps skip the heap
-> bake). ⚠️ Onboarding the repo to the org Renovate app is the operator's
-> standing action if not already done.
+> bake). ⚠️ **NOT yet active for this repo.** The org Renovate app
+> (`DarcStar-Technologies`, installed 2026-04-17) runs in **"selected
+> repositories"** mode and `gide-public-images` is **not in the selection** — so
+> nothing is auto-checking upstream yet (0 bot PRs, no Dependency Dashboard).
+> Activate it per the step below.
 
-Add this repo to the org Renovate config or install the Renovate GitHub App.
+**Activate:** the Renovate GitHub App is already installed on the org, but in
+**"selected repositories"** mode — so it must be granted access to this repo:
+**Org Settings → GitHub Apps → Renovate → Configure → Repository access** → add
+`gide-public-images`. This is a UI/admin action; CI cannot do it. Because
+`renovate.json` already exists, Renovate **skips the onboarding PR** and on its
+next run (Mondays before 6am UTC) opens the Dependency Dashboard and dependency
+PRs directly.
+
 `renovate.json` ships with working customManagers (ported from the private repo)
 that track the version `ARG`s directly — no Dockerfile annotations needed:
 
