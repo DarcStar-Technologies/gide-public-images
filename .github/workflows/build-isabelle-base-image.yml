@@ -343,12 +343,24 @@ jobs:
           CANDIDATE: ${{ env.CANDIDATE_TAG }}
           SHA: ${{ github.sha }}
           VERSION: ${{ steps.ver.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           # `:latest` (rolling), `:${version}` (e.g.
           # Isabelle2025-2-afp-2026-06-01; human/matrix pin), `:${sha}`
           # (forensic) all point at the verified candidate.
+          #
+          # OCI image annotations stamped at the index level (provenance +
+          # documentation -> this image's changelog). image.source/description
+          # are config labels set in the Dockerfile. `created` is RFC 3339 UTC
+          # build time.
+          CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          DOC="https://github.com/${REPO}/blob/main/changelogs/gide-isabelle-base.md"
           docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.version=${VERSION}" \
+            --annotation "index:org.opencontainers.image.revision=${SHA}" \
+            --annotation "index:org.opencontainers.image.created=${CREATED}" \
+            --annotation "index:org.opencontainers.image.documentation=${DOC}" \
             --tag "${IMAGE}:latest" \
             --tag "${IMAGE}:${VERSION}" \
             --tag "${IMAGE}:${SHA}" \

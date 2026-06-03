@@ -178,6 +178,10 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "resolved ${DOCKERFILE} -> version $version"
 
+      - name: Stamp build timestamp (RFC 3339 UTC)
+        id: meta
+        run: echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push (${{ matrix.prover }})
         id: build
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
@@ -192,6 +196,14 @@ jobs:
             ghcr.io/darcstar-technologies/gide-${{ matrix.prover }}:latest
             ghcr.io/darcstar-technologies/gide-${{ matrix.prover }}:${{ steps.ver.outputs.version }}
             ghcr.io/darcstar-technologies/gide-${{ matrix.prover }}:${{ github.sha }}
+          # OCI image annotations (provenance + documentation -> this image's
+          # changelog). image.source/description are config labels set in the
+          # Dockerfile; these add version/revision/created/documentation.
+          labels: |
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/main/changelogs/gide-${{ matrix.prover }}.md
           # Per-prover cache scope so unrelated provers don't poison
           # each other's layer reuse.
           cache-from: type=gha,scope=prover-${{ matrix.prover }}

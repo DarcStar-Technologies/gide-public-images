@@ -337,13 +337,26 @@ jobs:
           CANDIDATE: ${{ env.CANDIDATE_TAG }}
           SHA: ${{ github.sha }}
           VERSION: ${{ steps.ver.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           # `imagetools create` re-tags the existing manifest list under
           # new names without re-uploading any layers; cheap and idempotent.
           # `:latest` (rolling), `:${version}` (e.g. v4.30.0; human/matrix
           # pin), and `:${sha}` (forensic) all point at the verified candidate.
+          #
+          # OCI image annotations stamped at the index level — the right place
+          # for image-wide metadata on a multi-arch manifest list:
+          # version/revision/created for provenance, documentation -> this
+          # image's changelog. (image.source/description are config labels set
+          # in the Dockerfile.) `created` is RFC 3339 UTC build time.
+          CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          DOC="https://github.com/${REPO}/blob/main/changelogs/gide-lean4-base.md"
           docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.version=${VERSION}" \
+            --annotation "index:org.opencontainers.image.revision=${SHA}" \
+            --annotation "index:org.opencontainers.image.created=${CREATED}" \
+            --annotation "index:org.opencontainers.image.documentation=${DOC}" \
             --tag "${IMAGE}:latest" \
             --tag "${IMAGE}:${VERSION}" \
             --tag "${IMAGE}:${SHA}" \
