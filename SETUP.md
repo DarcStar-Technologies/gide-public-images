@@ -117,21 +117,20 @@ hasn't published yet (step 3).
 
 ## 5. Renovate
 
-> **Status:** ✅ `renovate.json` is committed and correct (incl. the
-> isabelle-base runtime-base customManager so CVE digest bumps skip the heap
-> bake). ⚠️ **NOT yet active for this repo.** The org Renovate app
-> (`DarcStar-Technologies`, installed 2026-04-17) runs in **"selected
-> repositories"** mode and `gide-public-images` is **not in the selection** — so
-> nothing is auto-checking upstream yet (0 bot PRs, no Dependency Dashboard).
-> Activate it per the step below.
+> **Status:** ✅ **active** (since 2026-06-03). `renovate.json` is committed and
+> working; Renovate is watching this repo — **Dependency Dashboard: #21** — and
+> runs on schedule (before 6am Monday UTC). Verified detecting real updates
+> (e.g. an apalache version bump + the GitHub Actions / ubuntu / temurin digest
+> pins) and honoring the isabelle-base dockerfile-manager disable.
 
-**Activate:** the Renovate GitHub App is already installed on the org, but in
-**"selected repositories"** mode — so it must be granted access to this repo:
-**Org Settings → GitHub Apps → Renovate → Configure → Repository access** → add
-`gide-public-images`. This is a UI/admin action; CI cannot do it. Because
-`renovate.json` already exists, Renovate **skips the onboarding PR** and on its
-next run (Mondays before 6am UTC) opens the Dependency Dashboard and dependency
-PRs directly.
+**How it was activated (for re-bootstrap):** the org Renovate app
+(`DarcStar-Technologies`) runs in **"selected repositories"** mode, so the repo
+had to be granted access — **Org Settings → GitHub Apps → Renovate → Configure →
+Repository access** → add `gide-public-images`. This is an **org-owner UI action**
+(the `PUT /user/installations/{id}/repositories/{id}` API is owner-gated and 403s
+for a non-owner token; CI can't do it). Because `renovate.json` already existed,
+Renovate **skipped the onboarding PR** and went straight to the Dependency
+Dashboard + scheduled PRs.
 
 `renovate.json` ships with working customManagers (ported from the private repo)
 that track the version `ARG`s directly — no Dockerfile annotations needed:
