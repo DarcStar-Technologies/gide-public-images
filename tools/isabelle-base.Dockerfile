@@ -51,27 +51,31 @@ ARG ISABELLE_VERSION=Isabelle2025-2
 ARG ISABELLE_SHA256=a20a507bc7c1270d8be96a9f3fbec06345387789d2dc2c4d3df6260d47bfb33c
 
 # AFP release pinned by dated tag for reproducibility (#1022). The
-# DATED tag `afp-2026-02-06` is the correct pin shape: rolling tags
+# DATED tag `afp-2026-06-01` is the correct pin shape: rolling tags
 # like `afp-current` always serve the latest AFP, which would make the
 # SHA pin mismatch the contents the moment AFP rolls. The dated tag is
 # content-stable forever and matches the pinned `ISABELLE_VERSION`.
 #
-# AFP / Isabelle pairing: `afp-2026-02-06` is the AFP stable release
-# tagged for Isabelle 2025-2 (per isa-afp.org "Older releases: Feb 6,
-# 2026 : Isabelle2025-2"). Newer dated archives track Isabelle 2026
-# pre-release; pairing them with Isabelle 2025-2 produces "Missing
-# session sources entry" errors at `Complex_Bounded_Operators`
-# sub-session load.
+# AFP / Isabelle pairing: this AFP archive MUST target the same Isabelle
+# version as `ISABELLE_VERSION`, else the `Complex_Bounded_Operators`
+# heap bake fails with "Missing session sources entry". The dated tag
+# alone is NOT a reliable signal (some 2026-dated archives track the
+# Isabelle 2026 pre-release) — verify the tarball's own `etc/version`:
 #
-# Future AFP refreshes: bump `AFP_DATED_TAG` to match the bumped
-# `ISABELLE_VERSION` (verify against the AFP "Older releases" list),
-# recompute `AFP_SHA256` via `curl -sL <upstream-url> | sha256sum`,
-# update `AFP_DIRNAME` if the tarball's top-level directory naming
-# differs, AND re-dispatch the mirror workflow to publish the new
-# tags before opening a PR with these bumps.
-ARG AFP_DATED_TAG=afp-2026-02-06
-ARG AFP_SHA256=b059edd46073479ee8dde45004c2346a7365e5d94cded49d27257cfea66c8879
-ARG AFP_DIRNAME=afp-2026-02-06
+#   curl -sL https://isa-afp.org/release/<tag>.tar.gz \
+#     | tar xzO --wildcards '*/etc/version' | grep '^VERSION='
+#
+# `afp-2026-06-01` reports `VERSION=2025-2`, matching Isabelle2025-2.
+#
+# Future AFP refreshes: pick a dated tag whose `etc/version` matches the
+# bumped `ISABELLE_VERSION`, recompute `AFP_SHA256` via
+# `curl -sL <upstream-url> | sha256sum`, and update `AFP_DIRNAME` if the
+# tarball's top-level dir naming differs. Then just edit these ARGs and
+# open a PR — merging republishes the source mirror tag and rebuilds the
+# base automatically (see build-isabelle-base-image.yml BUMP ORDERING).
+ARG AFP_DATED_TAG=afp-2026-06-01
+ARG AFP_SHA256=872f85ed0d026bfd13940a3f76c6a8cd0e995c2f7c895dbd4671e84bc6ce39d0
+ARG AFP_DIRNAME=afp-2026-06-01
 
 # Mirror image refs. Parameterised so the workflow can override during
 # bootstrap (e.g. point at a personal fork's GHCR namespace for local

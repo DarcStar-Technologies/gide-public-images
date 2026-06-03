@@ -29,23 +29,27 @@ name: Build & Push gide-isabelle-base Image
 # "proof-verified". See migration plan §2.7.
 #
 # Triggers:
-#   - push to main of `tools/isabelle-base.Dockerfile` or this workflow
+#   - workflow_run: after "Mirror Isabelle Distribution to GHCR" succeeds
+#     on a push (a merged Isabelle/AFP pin bump). The mirror republishes
+#     the source tags first, so the new gide-*-source tags exist before
+#     this build FROM-s them — no race, no manual ordering.
 #   - weekly cron (Sunday 05:00 UTC) for Ubuntu / glibc CVE refreshes
 #   - workflow_dispatch with optional `isabelle_version` / `afp_*`
-#     inputs for one-off bumps without a Dockerfile edit
+#     inputs for one-off rebuilds
 #
 # Source tarballs arrive via `COPY --from=` of the GHCR mirror images
 # (gide-isabelle-source / gide-afp-source), which live in THIS same
 # public repo (populated by `mirror-isabelle-distribution.yml`).
 #
-# BUMP ORDERING (Isabelle / AFP version change): the mirror does NOT
-# auto-rebuild a *different* base — this Dockerfile FROM-s a specific
-# mirror tag via its `ISABELLE_VERSION` / `AFP_DATED_TAG` ARGs. To move
-# to a new version: (1) run `mirror-isabelle-distribution.yml` to publish
-# the new dated source tags, THEN (2) bump the ARG defaults in
-# `tools/isabelle-base.Dockerfile` (or pass the workflow_dispatch inputs)
-# so this base consumes them. A plain monthly mirror cron only refreshes
-# the existing tags and does not by itself change what this base builds.
+# BUMP ORDERING (Isabelle / AFP version change): open ONE PR editing the
+# `ISABELLE_VERSION` / `AFP_DATED_TAG` / `AFP_SHA256` / `AFP_DIRNAME` ARGs
+# in `tools/isabelle-base.Dockerfile`. On merge, the mirror picks up the
+# new in-tree pins (it triggers on a push touching that Dockerfile) and
+# republishes the matching gide-{isabelle,afp}-source tags; THIS build
+# then runs via workflow_run against them. No manual mirror dispatch and
+# no two-PR ordering. (The mirror's monthly liveness cron and manual
+# override dispatches deliberately do NOT trigger a base rebuild — see
+# the build-base `if:` guard.)
 #
 # linux/amd64-only for now: the bundled PolyML 5.9.2-2 in Isabelle
 # 2025-2 ships an `arm64-linux` binary that SIGILLs at the Pure session
@@ -56,15 +60,14 @@ name: Build & Push gide-isabelle-base Image
 # Dockerfile).
 
 on:
-  push:
+  # Rebuild AFTER the source mirror republishes (a merged pin bump). The
+  # build-base `if:` gates this to mirror runs that SUCCEEDED and were
+  # push-triggered, so the mirror's liveness cron / override dispatches
+  # don't kick a ~2.5h rebuild.
+  workflow_run:
+    workflows: ["Mirror Isabelle Distribution to GHCR"]
+    types: [completed]
     branches: [main]
-    paths:
-      - "tools/isabelle-base.Dockerfile"
-      - ".github/workflows/build-isabelle-base-image.yml"
-  pull_request:
-    paths:
-      - "tools/isabelle-base.Dockerfile"
-      - ".github/workflows/build-isabelle-base-image.yml"
   schedule:
     # Weekly Sunday 05:00 UTC for Ubuntu / glibc CVE refreshes. The slow
     # CBO bake lives in this base, so the cron drives the heavy rebuild.
@@ -97,12 +100,10 @@ permissions:
   packages: write
 
 # Serialize publishing on `gide-isabelle-base-publish` so two base-
-# driven publishes never race on `gide-isabelle-base:latest`. PR runs
-# scope to their own group so iterating commits cancels in-flight smoke
-# builds.
+# driven publishes never race on `gide-isabelle-base:latest`.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('gide-isabelle-base-pr-{0}', github.event.pull_request.number) || 'gide-isabelle-base-publish' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: gide-isabelle-base-publish
+  cancel-in-progress: false
 
 env:
   BASE_IMAGE: ghcr.io/darcstar-technologies/gide-isabelle-base
@@ -111,7 +112,13 @@ env:
 jobs:
   build-base:
     name: Build base (Isabelle + AFP + CBO heap)
-    if: github.event_name != 'pull_request'
+    # Run on schedule/dispatch; for the mirror workflow_run, only when it
+    # SUCCEEDED and was push-triggered (a merged pin bump) — not the
+    # mirror's liveness cron or out-of-band override dispatches.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     # TODO(migration): GitHub-hosted standard public runner = 4 vCPU /
     # 16 GB / amd64 (FREE for public repos). The Dockerfile's CBO heap
     # chain peaks at ~12 GB under 64-bit PolyML + `-j 2`, which fits 16
@@ -299,52 +306,3 @@ jobs:
             --tag "${IMAGE}:latest" \
             --tag "${IMAGE}:${SHA}" \
             "${IMAGE}:${CANDIDATE}"
-
-  smoke-validate-pr:
-    # PR-time gate: build the base Dockerfile with `push: false` so a
-    # typo in the Isabelle download / AFP fetch / CBO bake fails CI
-    # before merge. Reads the cache the publish path wrote so most
-    # PRs hit warm CBO layers.
-    name: Smoke-validate base
-    if: github.event_name == 'pull_request'
-    # TODO(migration): same runner sizing caveat as build-base — the
-    # cold CBO bake wants ~12 GB; standard `ubuntu-24.04` (free, 16 GB,
-    # amd64) fits but with thin headroom. Bump to a larger (billed)
-    # runner if a cold-cache PR build OOMs or times out.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 150
-    # `packages: read` is needed for the GHCR auth step below — the
-    # Dockerfile FROM-s the mirror tags (`gide-isabelle-source`,
-    # `gide-afp-source`), so smoke-validate needs to authenticate. The
-    # workflow-level `permissions:` block grants `packages: write` to
-    # publish jobs; this job only needs read.
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      # Login MUST precede `Set up Docker Buildx` so the
-      # docker-container builder mounts a populated
-      # `~/.docker/config.json`; the Dockerfile FROM-s the GHCR mirror
-      # source images.
-      - name: Authenticate to GHCR
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
-
-      - name: Build (smoke-validate, no push)
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
-        with:
-          context: .
-          file: tools/isabelle-base.Dockerfile
-          platforms: linux/amd64
-          push: false
-          # Pull-only registry cache (see the publish job's note); no
-          # cache-to on PRs (this job only has packages: read).
-          cache-from: type=registry,ref=${{ env.BASE_IMAGE }}:buildcache-amd64
