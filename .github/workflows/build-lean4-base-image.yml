@@ -303,6 +303,8 @@ jobs:
       contents: read
       packages: write
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
       - name: Authenticate to GHCR
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
         with:
@@ -313,19 +315,37 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
 
+      - name: Resolve version tag (Mathlib rev)
+        id: ver
+        env:
+          MATHLIB_REV: ${{ inputs.mathlib_rev }}
+        run: |
+          set -euo pipefail
+          # Human-readable version tag = the Mathlib revision (the Lean
+          # toolchain is pinned in lockstep). A dispatch input overrides the
+          # in-tree ARG default; otherwise read the default from the Dockerfile.
+          version="${MATHLIB_REV:-}"
+          if [ -z "$version" ]; then
+            version="$(grep -m1 '^ARG MATHLIB_REV=' tools/lean4-base.Dockerfile | sed 's/^ARG MATHLIB_REV=//')"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "version tag: $version"
+
       - name: Promote base candidate
         env:
           IMAGE: ${{ env.BASE_IMAGE }}
           CANDIDATE: ${{ env.CANDIDATE_TAG }}
           SHA: ${{ github.sha }}
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           set -euo pipefail
           # `imagetools create` re-tags the existing manifest list under
-          # new names without re-uploading any layers; cheap and
-          # idempotent. Both `:latest` (consumer-facing) and `:${sha}`
-          # (forensic) point at the verified candidate.
+          # new names without re-uploading any layers; cheap and idempotent.
+          # `:latest` (rolling), `:${version}` (e.g. v4.29.1; human/matrix
+          # pin), and `:${sha}` (forensic) all point at the verified candidate.
           docker buildx imagetools create \
             --tag "${IMAGE}:latest" \
+            --tag "${IMAGE}:${VERSION}" \
             --tag "${IMAGE}:${SHA}" \
             "${IMAGE}:${CANDIDATE}"
 

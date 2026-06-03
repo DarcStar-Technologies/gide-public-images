@@ -40,6 +40,24 @@ gide-lean4-base  ──FROM──►  gide-lean4   (private; bakes proofs/)
 gide-isabelle-base ─FROM─►  gide-isabelle (private; bakes proofs/)
 ```
 
+## Image tags
+
+Every image carries three kinds of tag (all the same digest):
+
+- **`:latest`** — rolling; the most recent good build.
+- **`:<upstream-version>`** — human-readable, for pinning and version matrices.
+  Semver where upstream is (`gide-z3:4.16.0`, `gide-lean4-base:v4.29.1`); the
+  upstream version string otherwise (`gide-isabelle-base:Isabelle2025-2-afp-2026-06-01`,
+  `gide-dreal:4.21.06.2`). Derived from the Dockerfile version `ARG`, so a
+  Renovate bump moves it automatically.
+- **`:<git-sha>`** — forensic; the exact commit that built the image.
+
+The source mirrors are tagged by upstream version directly
+(`gide-isabelle-source:Isabelle2025-2-<arch>`, `gide-afp-source:afp-2026-06-01`).
+
+A version tag tracks the *latest build* of that upstream version (a CVE rebuild
+re-points it); for byte-exact reproducibility, pin by digest (`@sha256:…`).
+
 ## Provenance & security
 
 - Each build attaches SLSA provenance + an SPDX SBOM at publish time.
