@@ -58,6 +58,14 @@ The source mirrors are tagged by upstream version directly
 A version tag tracks the *latest build* of that upstream version (a CVE rebuild
 re-points it); for byte-exact reproducibility, pin by digest (`@sha256:…`).
 
+## Changelog
+
+Per-image publish history — upstream versions (with links to each project's own
+release notes), the changes this repo makes during composition, and the
+published digests — lives in [`CHANGELOG.md`](./CHANGELOG.md) (one file per image
+under [`changelogs/`](./changelogs/)). Each entry is a publish event; pin by
+digest for byte-exact reproducibility.
+
 ## Provenance & security
 
 - Each build attaches SLSA provenance + an SPDX SBOM at publish time.
