@@ -13,8 +13,8 @@ apply to the **contents of the published images**.
 
 | Component | Version (pinned in `tools/lean4-base.Dockerfile`) | License | Upstream |
 |---|---|---|---|
-| Lean 4 | `v4.29.1` | Apache-2.0 | https://github.com/leanprover/lean4 |
-| Mathlib4 | `v4.29.1` | Apache-2.0 | https://github.com/leanprover-community/mathlib4 |
+| Lean 4 | `v4.30.0` | Apache-2.0 | https://github.com/leanprover/lean4 |
+| Mathlib4 | `v4.30.0` | Apache-2.0 | https://github.com/leanprover-community/mathlib4 |
 | elan | (pinned) | Apache-2.0 / MIT | https://github.com/leanprover/elan |
 | Ubuntu base | `ubuntu:26.04` | various (Ubuntu main) | https://ubuntu.com |
 
