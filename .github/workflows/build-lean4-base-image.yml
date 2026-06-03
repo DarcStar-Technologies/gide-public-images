@@ -341,7 +341,7 @@ jobs:
           set -euo pipefail
           # `imagetools create` re-tags the existing manifest list under
           # new names without re-uploading any layers; cheap and idempotent.
-          # `:latest` (rolling), `:${version}` (e.g. v4.29.1; human/matrix
+          # `:latest` (rolling), `:${version}` (e.g. v4.30.0; human/matrix
           # pin), and `:${sha}` (forensic) all point at the verified candidate.
           docker buildx imagetools create \
             --tag "${IMAGE}:latest" \

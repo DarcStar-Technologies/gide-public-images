@@ -14,8 +14,8 @@ FROM ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e57
 # toolchain (via elan) and Mathlib both publish native aarch64-linux
 # artifacts, so this Dockerfile is arch-agnostic; the multi-arch
 # manifest is assembled by the workflow (`build-lean4-base-image.yml`).
-ARG LEAN4_TOOLCHAIN=leanprover/lean4:v4.29.1
-ARG MATHLIB_REV=v4.29.1
+ARG LEAN4_TOOLCHAIN=leanprover/lean4:v4.30.0
+ARG MATHLIB_REV=v4.30.0
 ARG TARGETARCH
 
 RUN apt-get update && \

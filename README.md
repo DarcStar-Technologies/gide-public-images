@@ -46,7 +46,7 @@ Every image carries three kinds of tag (all the same digest):
 
 - **`:latest`** — rolling; the most recent good build.
 - **`:<upstream-version>`** — human-readable, for pinning and version matrices.
-  Semver where upstream is (`gide-z3:4.16.0`, `gide-lean4-base:v4.29.1`); the
+  Semver where upstream is (`gide-z3:4.16.0`, `gide-lean4-base:v4.30.0`); the
   upstream version string otherwise (`gide-isabelle-base:Isabelle2025-2-afp-2026-06-01`,
   `gide-dreal:4.21.06.2`). Derived from the Dockerfile version `ARG`, so a
   Renovate bump moves it automatically.
