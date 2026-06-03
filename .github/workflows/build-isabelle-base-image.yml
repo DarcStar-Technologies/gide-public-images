@@ -285,6 +285,8 @@ jobs:
       contents: read
       packages: write
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
       - name: Authenticate to GHCR
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
         with:
@@ -295,14 +297,43 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
 
+      - name: Resolve version tag (Isabelle + AFP)
+        id: ver
+        env:
+          ISABELLE_VERSION_IN: ${{ inputs.isabelle_version }}
+          AFP_URL_IN: ${{ inputs.afp_url }}
+        run: |
+          set -euo pipefail
+          # Composite human tag: Isabelle version + AFP dated release, since
+          # AFP can refresh within one Isabelle line (e.g. afp-2026-02-06 ->
+          # afp-2026-06-01 both on Isabelle2025-2). Dispatch inputs override
+          # the in-tree ARG defaults; the AFP dated tag derives from the
+          # afp_url input the same way the build-args resolver does.
+          iv="${ISABELLE_VERSION_IN:-}"
+          if [ -z "$iv" ]; then
+            iv="$(grep -m1 '^ARG ISABELLE_VERSION=' tools/isabelle-base.Dockerfile | sed 's/^ARG ISABELLE_VERSION=//')"
+          fi
+          at=""
+          if [ -n "$AFP_URL_IN" ]; then at="${AFP_URL_IN##*/}"; at="${at%.tar.gz}"; fi
+          if [ -z "$at" ]; then
+            at="$(grep -m1 '^ARG AFP_DATED_TAG=' tools/isabelle-base.Dockerfile | sed 's/^ARG AFP_DATED_TAG=//')"
+          fi
+          echo "version=${iv}-${at}" >> "$GITHUB_OUTPUT"
+          echo "version tag: ${iv}-${at}"
+
       - name: Promote base candidate
         env:
           IMAGE: ${{ env.BASE_IMAGE }}
           CANDIDATE: ${{ env.CANDIDATE_TAG }}
           SHA: ${{ github.sha }}
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           set -euo pipefail
+          # `:latest` (rolling), `:${version}` (e.g.
+          # Isabelle2025-2-afp-2026-06-01; human/matrix pin), `:${sha}`
+          # (forensic) all point at the verified candidate.
           docker buildx imagetools create \
             --tag "${IMAGE}:latest" \
+            --tag "${IMAGE}:${VERSION}" \
             --tag "${IMAGE}:${SHA}" \
             "${IMAGE}:${CANDIDATE}"
