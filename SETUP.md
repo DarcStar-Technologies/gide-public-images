@@ -135,10 +135,19 @@ that track the version `ARG`s directly — no Dockerfile annotations needed:
 
 **Isabelle / AFP are NOT auto-tracked** — there is no upstream Renovate
 datasource for them (the private repo has no manager for them either). Bump them
-manually by editing `ISABELLE_VERSION` / `AFP_DATED_TAG` in
-`tools/isabelle-base.Dockerfile` (or via the workflow_dispatch inputs), after
-running the mirror workflow to publish the new source tags — see the bump-order
-note in `build-isabelle-base-image.yml`.
+**in one PR** by editing the `ISABELLE_VERSION` / `AFP_DATED_TAG` / `AFP_SHA256`
+/ `AFP_DIRNAME` ARGs in `tools/isabelle-base.Dockerfile`. On merge, the mirror
+re-runs from the new in-tree pins (it triggers on a push touching that
+Dockerfile) and publishes the matching source tags, then `build-isabelle-base`
+rebuilds via `workflow_run` — no manual mirror dispatch, no two-step ordering.
+Verify the new AFP tarball targets the pinned Isabelle first:
+
+```bash
+curl -sL https://isa-afp.org/release/<afp-dated-tag>.tar.gz \
+  | tar xzO --wildcards '*/etc/version' | grep '^VERSION='   # must match ISABELLE_VERSION
+```
+
+See the bump-order note in `build-isabelle-base-image.yml`.
 
 ## 6. Hand-off to the private repo
 

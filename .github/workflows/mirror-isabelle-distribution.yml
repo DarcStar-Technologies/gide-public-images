@@ -30,9 +30,12 @@ name: Mirror Isabelle Distribution to GHCR
 # this is split into two PRs.
 #
 # Triggers:
-#   - workflow_dispatch with optional version/AFP overrides for one-off
-#     bumps before the in-tree Dockerfile is updated.
-#   - push of changes to this workflow file.
+#   - push to main of this workflow file OR tools/isabelle-base.Dockerfile.
+#     A merged Isabelle/AFP pin bump in the Dockerfile re-runs the mirror
+#     with the new in-tree pins, publishing the matching source tags;
+#     build-isabelle-base then consumes them via workflow_run.
+#   - workflow_dispatch with optional version/AFP overrides for one-off,
+#     out-of-band tags (does NOT trigger a base rebuild).
 #   - monthly cron (1st of each month, 04:00 UTC) — refresh against
 #     upstream to detect URL drift / SHA churn early. The mirror itself
 #     is content-stable per (version, AFP date) tag, so the cron is a
@@ -62,7 +65,7 @@ name: Mirror Isabelle Distribution to GHCR
 #   - `gide-isabelle-source:Isabelle2025-2-amd64`
 #   - `gide-isabelle-source:Isabelle2025-2-arm64`
 # AFP source is architecture-independent so the AFP mirror is single-
-# tagged: `gide-afp-source:afp-2026-02-06`.
+# tagged: `gide-afp-source:afp-2026-06-01`.
 
 on:
   workflow_dispatch:
@@ -91,6 +94,12 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/mirror-isabelle-distribution.yml"
+      # A merged Isabelle/AFP pin bump in the base Dockerfile re-runs the
+      # mirror with the new in-tree pins (the resolver reads
+      # ISABELLE_VERSION / AFP_DATED_TAG / AFP_SHA256 from it), publishing
+      # the matching source tags. build-isabelle-base then rebuilds via
+      # workflow_run, so the new gide-*-source tag exists before it FROMs.
+      - "tools/isabelle-base.Dockerfile"
   schedule:
     # Monthly liveness check: 04:00 UTC on the 1st. Cheap if the
     # (version, AFP date) tags already exist (the workflow is

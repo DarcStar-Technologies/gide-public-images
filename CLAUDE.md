@@ -88,9 +88,13 @@ then promote to `:latest` + `:<sha>` only on smoke-green.
   `linux/arm64` to it without rebuilding PolyML from source.
 - **Action pins** use the repo-canonical `docker/build-push-action@…# v7` SHA;
   keep all build steps on the same pin.
-- **Isabelle/AFP version bumps are manual** (no Renovate datasource): run
-  `mirror-isabelle-distribution.yml` first to publish the new source tags, then
-  bump `ISABELLE_VERSION` / `AFP_DATED_TAG` in `tools/isabelle-base.Dockerfile`.
+- **Isabelle/AFP version bumps are manual** (no Renovate datasource) but
+  **PR-driven**: edit the `ISABELLE_VERSION` / `AFP_DATED_TAG` / `AFP_SHA256` /
+  `AFP_DIRNAME` ARGs in `tools/isabelle-base.Dockerfile` in one PR. Merging it
+  re-runs the mirror (it triggers on a push touching that Dockerfile) to publish
+  the matching source tags, then rebuilds the base via `workflow_run` — no manual
+  mirror dispatch. Verify the AFP tarball's `etc/version` matches the Isabelle
+  version before bumping (the dated tag alone is not a reliable pairing signal).
   Lean4/Mathlib + the 5 SMT solvers are auto-tracked by `renovate.json`.
 - **GHCR package visibility is a manual, one-time flip** per package and cannot
   be set by CI — see `SETUP.md`.
