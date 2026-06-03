@@ -187,9 +187,16 @@ RUN mkdir -p ~/.isabelle/${ISABELLE_VERSION}/etc && \
 # that keeps the CBO heap here rather than in the fast, dev-driven overlay
 # layer. Consumer: gide#2122 graduates the
 # `lyapunov_dissipation_to_trajectory_bound` proof from Lean-only to a
-# mirrored Isabelle proof. ODE sits on top of HOL-Analysis, which the CBO
-# bake already builds, so the incremental work is the ODE session itself
-# (plus any of its own deps CBO didn't pull) — NOT a fresh HOL-Analysis.
+# mirrored Isabelle proof. ODE's base session is parented on HOL-Analysis,
+# which the CBO bake already builds, so we do NOT pay for a fresh
+# HOL-Analysis. The incremental cost is the ODE base session itself plus
+# the support sessions it pulls that the CBO set lacks — currently
+# HOL-Decision_Procs (distribution), Triangle, List-Index and
+# Affine_Arithmetic (AFP, the non-trivial one). The heavier rigorous-
+# numerics sessions (HOL-ODE-Numerics, Lorenz_*) and their Collections
+# dependency are deliberately NOT built: only the base
+# Ordinary_Differential_Equations session, which contains Gronwall, is
+# needed (gpi#17 non-goals).
 #
 # Both sessions go to ONE `isabelle build -b` invocation so shared
 # dependencies (HOL-Analysis, …) are built exactly once. `-j 1` runs

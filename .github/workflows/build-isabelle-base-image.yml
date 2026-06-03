@@ -122,18 +122,21 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push')
     # TODO(migration): GitHub-hosted standard public runner = 4 vCPU /
-    # 16 GB / amd64 (FREE for public repos). The Dockerfile's CBO heap
-    # chain peaks at ~12 GB under 64-bit PolyML + `-j 2`, which fits 16
-    # GB but with thin headroom; cold builds run ~90-150 min. If the
-    # heap bake OOMs or trips the timeout on the standard runner, switch
+    # 16 GB / amd64 (FREE for public repos). The Dockerfile bakes the
+    # heaps at `-j 1` (one session at a time) under 64-bit PolyML with a
+    # 6 GB ML heap cap, so peak memory stays ~6 GB — comfortable on 16 GB.
+    # If the bake OOMs or trips the timeout on the standard runner, switch
     # to a GitHub larger runner (e.g. `ubuntu-latest-8-cores` or a
     # 16GB+ tier) — public repos CAN use larger runners but they are
     # BILLED, whereas standard `ubuntu-24.04` is free. amd64-only.
     runs-on: ubuntu-24.04
-    # 90-150 min wall-clock for the cold CBO heap chain under `-j 2`.
-    # Registry-backed buildkit cache (see the build step) makes warm runs
-    # fast; only the changed layer rebuilds.
-    timeout-minutes: 240
+    # ~90-150 min for the cold CBO heap chain at `-j 1`, plus the added
+    # ODE base session and its support deps (HOL-Decision_Procs, Triangle,
+    # List-Index, Affine_Arithmetic, then the ODE theories incl. Gronwall
+    # — gpi#17). The 300 min cap leaves headroom over the worst case while
+    # staying under GitHub's 6h job limit; registry buildcache makes warm
+    # runs fast (only the changed layer rebuilds).
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
