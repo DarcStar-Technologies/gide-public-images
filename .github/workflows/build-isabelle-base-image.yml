@@ -2,9 +2,10 @@ name: Build & Push gide-isabelle-base Image
 
 # PUBLIC TOOLCHAIN REPO (darcstar-technologies/gide-public-images).
 #
-# Builds the generic Isabelle + AFP + Complex_Bounded_Operators (CBO)
-# toolchain base image (Ubuntu + Isabelle distribution + AFP source +
-# pre-baked CBO heap chain). This image is pure toolchain: it carries NO
+# Builds the generic Isabelle + AFP toolchain base image (Ubuntu +
+# Isabelle distribution + AFP source + pre-baked Complex_Bounded_Operators
+# (CBO) and Ordinary_Differential_Equations (ODE) heap chains). This image
+# is pure toolchain: it carries NO
 # GIDE proof content. The theorem-baking overlay (`gide-isabelle`) and
 # the proof-verification catalog live in the private
 # DarcStar-Technologies/gide repo, which builds the overlay FROM this
@@ -14,14 +15,15 @@ name: Build & Push gide-isabelle-base Image
 #   1. Build the base candidate and push as `:candidate-<sha>`.
 #   2. Run a self-contained TOOLCHAIN SMOKE test inside the candidate
 #      image: an inline `SmokeToolchain` theory that imports the
-#      pre-baked CBO heap and proves a trivial lemma. This confirms the
-#      baked heap loads (and thus the AFP/Isabelle pairing is intact)
-#      without referencing any GIDE proof.
+#      pre-baked CBO heap (session parent) and the ODE heap (sibling
+#      session, via `imports ...Gronwall`) and proves a trivial lemma.
+#      This confirms both baked heaps load (and thus the AFP/Isabelle
+#      pairing is intact) without referencing any GIDE proof.
 #   3. On smoke-green, retag the base candidate as `:latest` (and
 #      `:<sha>`). The candidate tag is left in place for forensics.
 #
-# IMPORTANT — the smoke here is a TOOLCHAIN sanity check only (does the
-# pre-baked CBO heap load). It deliberately does NOT verify the GIDE
+# IMPORTANT — the smoke here is a TOOLCHAIN sanity check only (do the
+# pre-baked CBO + ODE heaps load). It deliberately does NOT verify the GIDE
 # proof catalog (not present in this repo). The proof gate happens at
 # ADOPTION time in the private repo: the overlay pins this base by digest
 # and a Renovate digest-bump PR runs `ci-formal-theorems` before adopting
@@ -120,18 +122,21 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push')
     # TODO(migration): GitHub-hosted standard public runner = 4 vCPU /
-    # 16 GB / amd64 (FREE for public repos). The Dockerfile's CBO heap
-    # chain peaks at ~12 GB under 64-bit PolyML + `-j 2`, which fits 16
-    # GB but with thin headroom; cold builds run ~90-150 min. If the
-    # heap bake OOMs or trips the timeout on the standard runner, switch
+    # 16 GB / amd64 (FREE for public repos). The Dockerfile bakes the
+    # heaps at `-j 1` (one session at a time) under 64-bit PolyML with a
+    # 6 GB ML heap cap, so peak memory stays ~6 GB — comfortable on 16 GB.
+    # If the bake OOMs or trips the timeout on the standard runner, switch
     # to a GitHub larger runner (e.g. `ubuntu-latest-8-cores` or a
     # 16GB+ tier) — public repos CAN use larger runners but they are
     # BILLED, whereas standard `ubuntu-24.04` is free. amd64-only.
     runs-on: ubuntu-24.04
-    # 90-150 min wall-clock for the cold CBO heap chain under `-j 2`.
-    # Registry-backed buildkit cache (see the build step) makes warm runs
-    # fast; only the changed layer rebuilds.
-    timeout-minutes: 240
+    # ~90-150 min for the cold CBO heap chain at `-j 1`, plus the added
+    # ODE base session and its support deps (HOL-Decision_Procs, Triangle,
+    # List-Index, Affine_Arithmetic, then the ODE theories incl. Gronwall
+    # — gpi#17). The 300 min cap leaves headroom over the worst case while
+    # staying under GitHub's 6h job limit; registry buildcache makes warm
+    # runs fast (only the changed layer rebuilds).
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -207,7 +212,7 @@ jobs:
           sbom: true
 
   smoke:
-    name: Toolchain smoke test (CBO heap loads)
+    name: Toolchain smoke test (CBO + ODE heaps load)
     if: github.event_name != 'pull_request'
     needs: build-base
     # TODO(migration): the smoke job only loads the pre-baked heap and
@@ -228,47 +233,58 @@ jobs:
           set -euo pipefail
           # Self-contained smoke: write a SmokeToolchain theory + ROOT
           # into a workdir, mount it into the candidate base image, and
-          # run `isabelle build` so the session must LOAD the pre-baked
-          # Complex_Bounded_Operators heap before checking the trivial
-          # lemma. If the baked heap is missing or the AFP/Isabelle
-          # pairing drifted, import resolution / heap load fails and
-          # this step goes red — gating promotion. No GIDE proof,
-          # isabelle_daemon.py, check_proofs.py, uv, or proofs/ are
-          # referenced.
+          # run `isabelle build` so the session must LOAD both pre-baked
+          # heaps before checking the trivial lemma:
+          #   - Complex_Bounded_Operators (the session PARENT), and
+          #   - Ordinary_Differential_Equations (a sibling session,
+          #     declared via `sessions` and pulled in by an `imports
+          #     ...Gronwall` line — gpi#17).
+          # If either baked heap is missing or the AFP/Isabelle pairing
+          # drifted, import resolution / heap load fails and this step
+          # goes red — gating promotion. No GIDE proof, isabelle_daemon.py,
+          # check_proofs.py, uv, or proofs/ are referenced.
           #
-          # TODO(migration): import parent = `Complex_Bounded_Operators`
-          # session heap. The session name comes from
-          # tools/isabelle-base.Dockerfile line 168:
-          #   `isabelle build -j 2 -o timeout_scale=2.0 -b Complex_Bounded_Operators`
-          # `Complex_Bounded_Linear_Function` is a theory in that AFP
-          # session; if that theory name ever changes upstream, swap it
-          # for any theory the session exports (e.g.
+          # The session names come from the bake invocation in
+          # tools/isabelle-base.Dockerfile:
+          #   `isabelle build -j 1 -o timeout_scale=2.0 \
+          #       -b Complex_Bounded_Operators Ordinary_Differential_Equations`
+          # `Complex_Bounded_Linear_Function` and `Gronwall` are theories
+          # those AFP sessions export; if a theory name ever changes
+          # upstream, swap it for any theory the session exports (e.g.
           # `Complex_Bounded_Operators.Cblinfun_Code`).
           WORK="$(mktemp -d)"
           cat > "${WORK}/SmokeToolchain.thy" <<'THY'
           theory SmokeToolchain
-            imports Complex_Bounded_Operators.Complex_Bounded_Linear_Function
+            imports
+              Complex_Bounded_Operators.Complex_Bounded_Linear_Function
+              Ordinary_Differential_Equations.Gronwall
           begin
 
           lemma smoke: "(2::nat) + 2 = 4" by simp
 
           end
           THY
+          # Parent = the CBO heap; `sessions Ordinary_Differential_Equations`
+          # makes the sibling ODE heap available so the Gronwall import
+          # resolves from its pre-baked image (gpi#17, AC #2). Both heaps
+          # must already exist in the image or the build fails here.
           cat > "${WORK}/ROOT" <<'ROOT'
           session SmokeToolchain = Complex_Bounded_Operators +
+            sessions
+              Ordinary_Differential_Equations
             theories
               SmokeToolchain
           ROOT
           # TODO(migration): exact isabelle invocation. The image
-          # ENTRYPOINT is `isabelle` (Dockerfile line 170), so the args
-          # below are appended to it. `-d .` registers the mounted
-          # session dir; building session `SmokeToolchain` (whose parent
-          # is the pre-baked `Complex_Bounded_Operators` heap) forces
-          # that heap to load. `-o timeout_scale=2.0` mirrors the
-          # Dockerfile's slow-runner cushion. If `build` proves too
-          # heavy on the free runner, an alternative is
-          # `isabelle process` against a process file, but `build` is
-          # the canonical heap-load confirmation.
+          # ENTRYPOINT is `isabelle`, so the args below are appended to
+          # it. `-d .` registers the mounted session dir; building session
+          # `SmokeToolchain` forces both pre-baked heaps to load — its
+          # parent `Complex_Bounded_Operators` and the `sessions`-declared
+          # `Ordinary_Differential_Equations` (whose `Gronwall` theory the
+          # smoke imports). `-o timeout_scale=2.0` mirrors the Dockerfile's
+          # slow-runner cushion. If `build` proves too heavy on the free
+          # runner, an alternative is `isabelle process` against a process
+          # file, but `build` is the canonical heap-load confirmation.
           docker run --rm \
             -v "${WORK}:/home/isabelle/smoke:ro" \
             -w /home/isabelle/smoke \

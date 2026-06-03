@@ -22,7 +22,7 @@ pull` works):
 | Image | Contents | Build workflow |
 |---|---|---|
 | `gide-lean4-base` | Ubuntu + elan + Lean4 + pre-compiled Mathlib4 | `build-lean4-base-image.yml` |
-| `gide-isabelle-base` | Ubuntu + Isabelle + AFP + pre-baked Complex_Bounded_Operators heap | `build-isabelle-base-image.yml` |
+| `gide-isabelle-base` | Ubuntu + Isabelle + AFP + pre-baked Complex_Bounded_Operators + Ordinary_Differential_Equations heaps | `build-isabelle-base-image.yml` |
 | `gide-isabelle-source` | Verbatim upstream Isabelle distribution tarball | `mirror-isabelle-distribution.yml` |
 | `gide-afp-source` | Verbatim upstream AFP tarball | `mirror-isabelle-distribution.yml` |
 | `gide-z3` / `gide-cvc5` / `gide-yices2` / `gide-dreal` / `gide-apalache` | SMT / model-checking solver binaries | `build-prover-images.yml` |

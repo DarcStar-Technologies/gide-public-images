@@ -46,9 +46,11 @@ README.md  SETUP.md  CLAUDE.md  renovate.json  THIRD-PARTY-NOTICES.md  LICENSE  
 4. **First-publish bootstrap:** dispatch each build workflow and confirm images
    land at the unchanged `ghcr.io/darcstar-technologies/gide-*` refs and that
    `docker buildx imagetools inspect <ref>:latest` succeeds **without auth**.
-5. **Confirm runner capacity:** the Isabelle base CBO-heap build (~90–150 min,
-   ~12 GB RAM) must fit GitHub's standard public runner; if not, opt into a
-   larger runner (billed even on public repos) — see the workflow's TODO.
+5. **Confirm runner capacity:** the Isabelle base CBO + ODE heap build
+   (~90–150 min for the CBO chain plus the Ordinary_Differential_Equations
+   delta; ~6 GB peak RAM at `-j 1`) must fit GitHub's standard public runner;
+   if not, opt into a larger runner (billed even on public repos) — see the
+   workflow's TODO.
 
 ## Changes required in the PRIVATE `gide` repo (separate PR, step 6 of the plan)
 

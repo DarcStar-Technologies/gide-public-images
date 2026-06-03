@@ -89,8 +89,9 @@ Flip each package to Public once it first publishes.
 > If a base build's `smoke` job fails on first run, check the
 > `# TODO(migration):` smoke-invocation assumptions against the real image —
 > the Lean entrypoint/WORKDIR (`build-lean4-base-image.yml`) and the Isabelle
-> heap theory name (`build-isabelle-base-image.yml`,
-> `Complex_Bounded_Operators.Complex_Bounded_Linear_Function`). These are the
+> heap theory names (`build-isabelle-base-image.yml`:
+> `Complex_Bounded_Operators.Complex_Bounded_Linear_Function` and
+> `Ordinary_Differential_Equations.Gronwall`). These are the
 > only steps that couldn't be verified pre-publish.
 
 ## 4. Verify (must pass WITHOUT auth once public)

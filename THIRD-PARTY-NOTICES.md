@@ -25,6 +25,7 @@ apply to the **contents of the published images**.
 | Isabelle | `2025-2` | BSD-style (Isabelle license) | https://isabelle.in.tum.de |
 | Archive of Formal Proofs (AFP) | `afp-2026-06-01` | per-entry (BSD / LGPL / etc.) | https://www.isa-afp.org |
 | Complex_Bounded_Operators (AFP entry) | (AFP snapshot) | per-AFP-entry | https://www.isa-afp.org/entries/Complex_Bounded_Operators.html |
+| Ordinary_Differential_Equations (AFP entry) | (AFP snapshot) | per-AFP-entry | https://www.isa-afp.org/entries/Ordinary_Differential_Equations.html |
 | Ubuntu base | `ubuntu:26.04` | various | https://ubuntu.com |
 
 ## SMT / model-checking solver images

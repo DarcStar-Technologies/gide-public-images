@@ -1,5 +1,6 @@
 # Isabelle BASE image: Ubuntu + Isabelle distribution + AFP source +
-# pre-baked Complex_Bounded_Operators heap chain.
+# pre-baked Complex_Bounded_Operators and Ordinary_Differential_Equations
+# heap chains.
 #
 # This is the slow, upstream-driven layer (CBO heap is 90-150 min cold).
 # The expensive bake lives in the `heap-builder` stage on its own pinned
@@ -177,10 +178,33 @@ RUN mkdir -p ~/.isabelle/${ISABELLE_VERSION}/etc && \
 # Hilbert / cblinfun / selfadjoint / unitary machinery (T008 part-(a)
 # chain mirror, future graduations) can `imports
 # Complex_Bounded_Operators.<...>` without rebuilding the heap on every
-# CI invocation. `-j 1` runs sessions one at a time, so peak memory stays
-# around 6 GB (one 6 GB heap cap) — safe on the free 16 GB runner. Cold
-# build ~90-150 min (a little longer than `-j 2`, traded for headroom);
-# warm rebuilds (Buildx GHA cache) hit the cached layer. Issue #1022.
+# CI invocation.
+#
+# Also pre-build Ordinary_Differential_Equations (gide-public-images #17)
+# so the overlay can `imports Ordinary_Differential_Equations.Gronwall`
+# (the continuous Gronwall inequality, AFP Library/Gronwall.thy) without
+# compiling the ODE session on every overlay bake — the same rationale
+# that keeps the CBO heap here rather than in the fast, dev-driven overlay
+# layer. Consumer: gide#2122 graduates the
+# `lyapunov_dissipation_to_trajectory_bound` proof from Lean-only to a
+# mirrored Isabelle proof. ODE's base session is parented on HOL-Analysis,
+# which the CBO bake already builds, so we do NOT pay for a fresh
+# HOL-Analysis. The incremental cost is the ODE base session itself plus
+# the support sessions it pulls that the CBO set lacks — currently
+# HOL-Decision_Procs (distribution), Triangle, List-Index and
+# Affine_Arithmetic (AFP, the non-trivial one). The heavier rigorous-
+# numerics sessions (HOL-ODE-Numerics, Lorenz_*) and their Collections
+# dependency are deliberately NOT built: only the base
+# Ordinary_Differential_Equations session, which contains Gronwall, is
+# needed (gpi#17 non-goals).
+#
+# Both sessions go to ONE `isabelle build -b` invocation so shared
+# dependencies (HOL-Analysis, …) are built exactly once. `-j 1` runs
+# sessions one at a time, so peak memory stays around 6 GB (one 6 GB heap
+# cap) — safe on the free 16 GB runner. Cold build ~90-150 min for the CBO
+# chain plus the ODE-session delta (wall-time + image-size delta recorded
+# in the publishing run, per gpi#17 / gide#2122 acceptance criteria); warm
+# rebuilds (registry buildcache) hit the cached layer. Issues #1022, gpi#17.
 #
 # `-o timeout_scale=2.0` doubles all declared session timeouts so the
 # build survives slow CI hardware. `Complex_Bounded_Operators/ROOT`
@@ -188,11 +212,12 @@ RUN mkdir -p ~/.isabelle/${ISABELLE_VERSION}/etc && \
 # GitHub-hosted runner clocks the build at "factor 0.73" (about 37%
 # slower), which makes CBO need ~41 min wall and trip the declared
 # timeout. Doubling gives a 60 min ceiling, comfortably above what
-# this hardware actually needs while still surfacing a real hang.
-RUN isabelle build -j 1 -o timeout_scale=2.0 -b Complex_Bounded_Operators
+# this hardware actually needs while still surfacing a real hang. The
+# same scale covers the ODE session's declared timeouts.
+RUN isabelle build -j 1 -o timeout_scale=2.0 -b Complex_Bounded_Operators Ordinary_Differential_Equations
 
 # Stage 4: shipped image. Thin Ubuntu runtime + the baked Isabelle install
-# and CBO heap COPYed from the builder. This is the ONLY stage on a
+# and CBO + ODE heaps COPYed from the builder. This is the ONLY stage on a
 # CVE-patched base, so an Ubuntu digest bump here rebuilds just these few
 # layers (cache-hitting the heap-builder stage above) instead of re-running
 # the 90-150 min CBO bake. Runtime deps only: fontconfig + libgomp1 are
@@ -211,7 +236,7 @@ FROM ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e57
 # invalidates the cached heap-builder, so the 90-150 min CBO bake is
 # skipped on a runtime-only change.
 LABEL org.opencontainers.image.source="https://github.com/DarcStar-Technologies/gide-public-images" \
-      org.opencontainers.image.description="Isabelle + AFP + pre-baked Complex_Bounded_Operators heap (toolchain base; amd64)"
+      org.opencontainers.image.description="Isabelle + AFP + pre-baked Complex_Bounded_Operators and Ordinary_Differential_Equations heaps (toolchain base; amd64)"
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
