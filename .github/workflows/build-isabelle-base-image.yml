@@ -11,14 +11,15 @@ name: Build & Push gide-isabelle-base Image
 # published base.
 #
 # The workflow implements the verify-then-promote pattern:
-#   1. Build the base candidate and push as `:candidate-<sha>`.
-#   2. Run a self-contained TOOLCHAIN SMOKE test inside the candidate
-#      image: an inline `SmokeToolchain` theory that imports the
-#      pre-baked CBO heap and proves a trivial lemma. This confirms the
-#      baked heap loads (and thus the AFP/Isabelle pairing is intact)
-#      without referencing any GIDE proof.
-#   3. On smoke-green, retag the base candidate as `:latest` (and
-#      `:<sha>`). The candidate tag is left in place for forensics.
+#   1. Build per-arch candidates NATIVELY and push them by digest.
+#   2. Stitch the per-arch digests into a multi-arch `:candidate-<sha>`
+#      manifest list.
+#   3. Run a self-contained TOOLCHAIN SMOKE per arch: an inline
+#      `SmokeToolchain` theory that imports the pre-baked CBO heap and
+#      proves a trivial lemma — confirms the baked heap loads (and thus
+#      the AFP/Isabelle pairing is intact) on each arch, no GIDE proof.
+#   4. On smoke-green, retag the candidate manifest list as `:latest`
+#      (and `:<sha>`). The candidate tag is left in place for forensics.
 #
 # IMPORTANT — the smoke here is a TOOLCHAIN sanity check only (does the
 # pre-baked CBO heap load). It deliberately does NOT verify the GIDE
@@ -34,8 +35,9 @@ name: Build & Push gide-isabelle-base Image
 #     the source tags first, so the new gide-*-source tags exist before
 #     this build FROM-s them — no race, no manual ordering.
 #   - weekly cron (Sunday 05:00 UTC) for Ubuntu / glibc CVE refreshes
-#   - workflow_dispatch with optional `isabelle_version` / `afp_*`
-#     inputs for one-off rebuilds
+#   - workflow_dispatch with optional `isabelle_version` / `afp_*` inputs
+#     for one-off rebuilds, plus `validate_only` (build + smoke both
+#     arches with NO push/promote — a pre-merge multi-arch check).
 #
 # Source tarballs arrive via `COPY --from=` of the GHCR mirror images
 # (gide-isabelle-source / gide-afp-source), which live in THIS same
@@ -51,13 +53,15 @@ name: Build & Push gide-isabelle-base Image
 # override dispatches deliberately do NOT trigger a base rebuild — see
 # the build-base `if:` guard.)
 #
-# linux/amd64-only for now: the bundled PolyML 5.9.2-2 in Isabelle
-# 2025-2 ships an `arm64-linux` binary that SIGILLs at the Pure session
-# bootstrap on some ARM CPUs (`Illegal instruction (core dumped)`),
-# evidently using ARMv8 instruction extensions the runner doesn't
-# implement. Flipping arm64 back on is a one-liner once the upstream
-# PolyML bundle is fixed (or we rebuild PolyML from source inside the
-# Dockerfile).
+# Multi-arch (linux/amd64 + linux/arm64): per-arch native builds +
+# manifest-merge (the lean4-base pattern), avoiding the 3-5x QEMU tax on
+# the ~2.5h CBO bake. arm64 was previously refused (the bundled PolyML
+# SIGILLed at Pure bootstrap on an older GitHub ARM runner generation); a
+# 2026-06 probe on the current `ubuntu-24.04-arm` runner recompiled
+# Pure + HOL cleanly with the bundled poly, so arm64 is re-enabled and the
+# arm64 CBO bake + heap smoke below is the gate. Push-by-digest precludes
+# SLSA/SBOM attestations on the base (mode=max attestations wrap each arch
+# in an index and corrupt the merge) — same tradeoff as lean4-base.
 
 on:
   # Rebuild AFTER the source mirror republishes (a merged pin bump). The
@@ -94,6 +98,11 @@ on:
         description: "AFP extracted directory name (default: image ARG default)"
         required: false
         default: ""
+      validate_only:
+        description: "Build + smoke BOTH arches with NO push/promote (pre-merge multi-arch check)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -110,37 +119,35 @@ env:
   CANDIDATE_TAG: candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
-  build-base:
-    name: Build base (Isabelle + AFP + CBO heap)
-    # Run on schedule/dispatch; for the mirror workflow_run, only when it
-    # SUCCEEDED and was push-triggered (a merged pin bump) — not the
-    # mirror's liveness cron or out-of-band override dispatches.
-    if: >-
-      github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push')
-    # TODO(migration): GitHub-hosted standard public runner = 4 vCPU /
-    # 16 GB / amd64 (FREE for public repos). The Dockerfile's CBO heap
-    # chain peaks at ~12 GB under 64-bit PolyML + `-j 2`, which fits 16
-    # GB but with thin headroom; cold builds run ~90-150 min. If the
-    # heap bake OOMs or trips the timeout on the standard runner, switch
-    # to a GitHub larger runner (e.g. `ubuntu-latest-8-cores` or a
-    # 16GB+ tier) — public repos CAN use larger runners but they are
-    # BILLED, whereas standard `ubuntu-24.04` is free. amd64-only.
-    runs-on: ubuntu-24.04
-    # 90-150 min wall-clock for the cold CBO heap chain under `-j 2`.
-    # Registry-backed buildkit cache (see the build step) makes warm runs
-    # fast; only the changed layer rebuilds.
+  # ---------------------------------------------------------------------
+  # VALIDATE-ONLY: build + heap-smoke each arch natively with NO push and
+  # NO promote. Dispatched manually (validate_only=true) to prove a
+  # multi-arch change (e.g. arm64 enablement) bakes + smokes before merge.
+  # ---------------------------------------------------------------------
+  validate:
+    name: Validate base (${{ matrix.arch }}, no push)
+    if: github.event_name == 'workflow_dispatch' && inputs.validate_only
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      # Auth MUST come before `Set up Docker Buildx` so the
-      # docker-container builder mounts `~/.docker/config.json` with
-      # GHCR credentials already populated. Reversing this order
-      # produces an empty-auth buildkit container that falls back to
-      # anonymous pulls and 401s on the mirror source FROMs
-      # (gide-isabelle-source / gide-afp-source).
+      # Login precedes buildx so the docker-container builder mounts
+      # populated GHCR credentials (the registry cache-from + the mirror
+      # source FROMs; sources are public but login avoids pull rate limits).
       - name: Authenticate to GHCR
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
         with:
@@ -160,16 +167,6 @@ jobs:
           AFP_SHA256: ${{ inputs.afp_sha256 }}
           AFP_DIRNAME: ${{ inputs.afp_dirname }}
         run: |
-          # The Dockerfile no longer uses AFP_URL — the AFP tarball
-          # arrives via `COPY --from=ghcr.io/.../gide-afp-source:<tag>`.
-          # Derive the dated tag from the URL so the legacy
-          # workflow_dispatch input still works:
-          #
-          #   https://isa-afp.org/release/afp-2026-02-06.tar.gz
-          #   -> afp-2026-02-06
-          #
-          # If the in-tree default ARG covers your bump, leave the
-          # dispatch input empty.
           AFP_DATED_TAG=""
           if [ -n "$AFP_URL" ]; then
             AFP_DATED_TAG="${AFP_URL##*/}"
@@ -185,65 +182,25 @@ jobs:
             echo 'EOF_BA'
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build and push base candidate
+      - name: Build (validate, load, no push)
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
         with:
           context: .
           file: tools/isabelle-base.Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ env.BASE_IMAGE }}:${{ env.CANDIDATE_TAG }}
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          tags: gide-isabelle-base-validate:${{ matrix.arch }}
           build-args: ${{ steps.args.outputs.build_args }}
-          # Registry-backed buildkit cache (NOT type=gha): the ~12 GB
-          # Isabelle/AFP/CBO base would blow GitHub Actions' 10 GB/repo
-          # cache cap and thrash. A GHCR `:buildcache-amd64` image has no
-          # cap and gives a real warm path for the slow CBO heap layers.
-          cache-from: type=registry,ref=${{ env.BASE_IMAGE }}:buildcache-amd64
-          cache-to: type=registry,ref=${{ env.BASE_IMAGE }}:buildcache-amd64,mode=max
-          # SLSA provenance + SPDX SBOM attestations on the candidate
-          # base. The promote step retags via `imagetools create`,
-          # which preserves attestation referrers automatically.
-          provenance: mode=max
-          sbom: true
+          # Pull-only registry cache (this job has packages: read only). The
+          # arm64 buildcache does not exist yet, so the first arm64 validate
+          # is a cold ~2.5h CBO bake; subsequent runs hit the warm cache the
+          # publish path writes.
+          cache-from: type=registry,ref=${{ env.BASE_IMAGE }}:buildcache-${{ matrix.arch }}
 
-  smoke:
-    name: Toolchain smoke test (CBO heap loads)
-    if: github.event_name != 'pull_request'
-    needs: build-base
-    # TODO(migration): the smoke job only loads the pre-baked heap and
-    # proves a trivial lemma, so it is light on memory; standard
-    # `ubuntu-24.04` (free public runner, amd64) is ample. Keep amd64 to
-    # match the amd64-only base image.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - name: Authenticate to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Pull candidate base
-        run: docker pull -q "${{ env.BASE_IMAGE }}:${{ env.CANDIDATE_TAG }}"
-
-      - name: Run inline toolchain smoke theory inside candidate
+      - name: Heap smoke against the freshly built ${{ matrix.arch }} image
         run: |
           set -euo pipefail
-          # Self-contained smoke: write a SmokeToolchain theory + ROOT
-          # into a workdir, mount it into the candidate base image, and
-          # run `isabelle build` so the session must LOAD the pre-baked
-          # Complex_Bounded_Operators heap before checking the trivial
-          # lemma. If the baked heap is missing or the AFP/Isabelle
-          # pairing drifted, import resolution / heap load fails and
-          # this step goes red — gating promotion. No GIDE proof,
-          # isabelle_daemon.py, check_proofs.py, uv, or proofs/ are
-          # referenced.
-          #
-          # TODO(migration): import parent = `Complex_Bounded_Operators`
-          # session heap. The session name comes from
-          # tools/isabelle-base.Dockerfile line 168:
-          #   `isabelle build -j 2 -o timeout_scale=2.0 -b Complex_Bounded_Operators`
-          # `Complex_Bounded_Linear_Function` is a theory in that AFP
-          # session; if that theory name ever changes upstream, swap it
-          # for any theory the session exports (e.g.
-          # `Complex_Bounded_Operators.Cblinfun_Code`).
           WORK="$(mktemp -d)"
           cat > "${WORK}/SmokeToolchain.thy" <<'THY'
           theory SmokeToolchain
@@ -259,16 +216,229 @@ jobs:
             theories
               SmokeToolchain
           ROOT
-          # TODO(migration): exact isabelle invocation. The image
-          # ENTRYPOINT is `isabelle` (Dockerfile line 170), so the args
-          # below are appended to it. `-d .` registers the mounted
-          # session dir; building session `SmokeToolchain` (whose parent
-          # is the pre-baked `Complex_Bounded_Operators` heap) forces
-          # that heap to load. `-o timeout_scale=2.0` mirrors the
-          # Dockerfile's slow-runner cushion. If `build` proves too
-          # heavy on the free runner, an alternative is
-          # `isabelle process` against a process file, but `build` is
-          # the canonical heap-load confirmation.
+          docker run --rm \
+            -v "${WORK}:/home/isabelle/smoke:ro" \
+            -w /home/isabelle/smoke \
+            "gide-isabelle-base-validate:${{ matrix.arch }}" \
+            build -d . -o timeout_scale=2.0 -v SmokeToolchain
+          echo "Heap smoke passed on ${{ matrix.arch }}: CBO heap loaded."
+
+  # ---------------------------------------------------------------------
+  # PUBLISH PATH: per-arch native build (push-by-digest) -> manifest merge
+  # -> per-arch heap smoke -> promote :latest + :<sha>.
+  # ---------------------------------------------------------------------
+  build-base:
+    name: Build base (${{ matrix.arch }})
+    # Run on schedule, on a non-validate dispatch, and on the mirror
+    # workflow_run only when it SUCCEEDED and was push-triggered (a merged
+    # pin bump) — not the mirror's liveness cron / override dispatches, and
+    # not a validate_only dispatch (that path is the `validate` job).
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+      || github.event_name == 'schedule'
+      || (github.event_name == 'workflow_dispatch' && !inputs.validate_only)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+          - arch: arm64
+            # GitHub-hosted arm64 runner (free for public repos); the CBO
+            # bake builds natively here, avoiding the QEMU tax.
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    # 90-150 min wall-clock for the cold CBO heap chain. Registry-backed
+    # buildkit cache (see the build step) makes warm runs fast; only the
+    # changed layer rebuilds.
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      # Auth MUST come before `Set up Docker Buildx` so the
+      # docker-container builder mounts `~/.docker/config.json` with GHCR
+      # credentials already populated. Reversing this order produces an
+      # empty-auth buildkit container that 401s on the mirror source FROMs.
+      - name: Authenticate to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Resolve build args
+        id: args
+        env:
+          ISABELLE_VERSION: ${{ inputs.isabelle_version }}
+          ISABELLE_SHA256: ${{ inputs.isabelle_sha256 }}
+          AFP_URL: ${{ inputs.afp_url }}
+          AFP_SHA256: ${{ inputs.afp_sha256 }}
+          AFP_DIRNAME: ${{ inputs.afp_dirname }}
+        run: |
+          # The Dockerfile no longer uses AFP_URL — the AFP tarball arrives
+          # via `COPY --from=ghcr.io/.../gide-afp-source:<tag>`. Derive the
+          # dated tag from the URL so the legacy dispatch input still works:
+          #   https://isa-afp.org/release/afp-2026-06-01.tar.gz
+          #   -> afp-2026-06-01
+          # If the in-tree default ARG covers your bump, leave it empty.
+          AFP_DATED_TAG=""
+          if [ -n "$AFP_URL" ]; then
+            AFP_DATED_TAG="${AFP_URL##*/}"
+            AFP_DATED_TAG="${AFP_DATED_TAG%.tar.gz}"
+          fi
+          {
+            echo 'build_args<<EOF_BA'
+            [ -n "$ISABELLE_VERSION" ] && echo "ISABELLE_VERSION=$ISABELLE_VERSION"
+            [ -n "$ISABELLE_SHA256" ]  && echo "ISABELLE_SHA256=$ISABELLE_SHA256"
+            [ -n "$AFP_DATED_TAG" ]    && echo "AFP_DATED_TAG=$AFP_DATED_TAG"
+            [ -n "$AFP_SHA256" ]       && echo "AFP_SHA256=$AFP_SHA256"
+            [ -n "$AFP_DIRNAME" ]      && echo "AFP_DIRNAME=$AFP_DIRNAME"
+            echo 'EOF_BA'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push base by digest
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          file: tools/isabelle-base.Dockerfile
+          platforms: ${{ matrix.platform }}
+          # push-by-digest defers tag assignment; the merge job stitches
+          # the per-arch digests into a multi-arch manifest list.
+          outputs: type=image,name=${{ env.BASE_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          build-args: ${{ steps.args.outputs.build_args }}
+          # Registry-backed buildkit cache (NOT type=gha): the ~12 GB
+          # Isabelle/AFP/CBO base would blow GitHub Actions' 10 GB/repo
+          # cache cap. A GHCR `:buildcache-<arch>` image has no cap and
+          # gives a real warm path for the slow CBO heap layers.
+          cache-from: type=registry,ref=${{ env.BASE_IMAGE }}:buildcache-${{ matrix.arch }}
+          cache-to: type=registry,ref=${{ env.BASE_IMAGE }}:buildcache-${{ matrix.arch }},mode=max
+          # No provenance/SBOM: with push-by-digest the digest must be a
+          # plain image manifest so the merge job's `imagetools create` can
+          # stitch the two arches into one manifest list. mode=max
+          # attestations would wrap each arch in an index and corrupt that
+          # merge (a broken multi-arch :latest).
+          provenance: false
+          sbom: false
+
+      - name: Export digest as artifact
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DIGEST" ]; then
+            echo "::error::buildx did not emit a digest output"
+            exit 1
+          fi
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: isabelle-base-digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-base-manifest:
+    name: Merge base multi-arch manifest (candidate)
+    needs: build-base
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download per-arch digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: /tmp/digests
+          pattern: isabelle-base-digest-*
+          merge-multiple: true
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Create + push candidate manifest list
+        env:
+          IMAGE: ${{ env.BASE_IMAGE }}
+          TAG: ${{ env.CANDIDATE_TAG }}
+        run: |
+          set -euo pipefail
+          sources=()
+          for f in /tmp/digests/*; do
+            digest="$(basename "$f")"
+            sources+=("${IMAGE}@sha256:${digest}")
+          done
+          if [ ${#sources[@]} -lt 2 ]; then
+            echo "::error::Expected >=2 per-arch digests, got ${#sources[@]}"
+            exit 1
+          fi
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${TAG}" \
+            "${sources[@]}"
+
+  smoke:
+    name: Toolchain smoke (${{ matrix.arch }}, CBO heap loads)
+    needs: merge-base-manifest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Authenticate to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      # `docker pull` on each native runner resolves the matching arch
+      # sub-image from the candidate manifest list automatically.
+      - name: Pull candidate base (${{ matrix.arch }})
+        run: docker pull -q "${{ env.BASE_IMAGE }}:${{ env.CANDIDATE_TAG }}"
+
+      - name: Run inline toolchain smoke theory inside candidate
+        run: |
+          set -euo pipefail
+          # Self-contained smoke: a SmokeToolchain theory whose session
+          # parent is the pre-baked Complex_Bounded_Operators heap, so
+          # `isabelle build` must LOAD that heap before checking the
+          # trivial lemma. If the baked heap is missing or the AFP/Isabelle
+          # pairing drifted, heap load fails and this step goes red —
+          # gating promotion. No GIDE proof referenced.
+          WORK="$(mktemp -d)"
+          cat > "${WORK}/SmokeToolchain.thy" <<'THY'
+          theory SmokeToolchain
+            imports Complex_Bounded_Operators.Complex_Bounded_Linear_Function
+          begin
+
+          lemma smoke: "(2::nat) + 2 = 4" by simp
+
+          end
+          THY
+          cat > "${WORK}/ROOT" <<'ROOT'
+          session SmokeToolchain = Complex_Bounded_Operators +
+            theories
+              SmokeToolchain
+          ROOT
           docker run --rm \
             -v "${WORK}:/home/isabelle/smoke:ro" \
             -w /home/isabelle/smoke \
@@ -277,8 +447,7 @@ jobs:
 
   promote:
     name: Promote candidate to :latest
-    if: github.event_name != 'pull_request'
-    needs: [build-base, smoke]
+    needs: [merge-base-manifest, smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -302,7 +471,24 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # imagetools re-tags the candidate manifest list under new names
+          # without re-uploading layers; both :latest (consumer-facing) and
+          # :${sha} (forensic) point at the verified candidate.
           docker buildx imagetools create \
             --tag "${IMAGE}:latest" \
             --tag "${IMAGE}:${SHA}" \
             "${IMAGE}:${CANDIDATE}"
+
+      - name: Verify multi-arch manifest
+        env:
+          BASE: ${{ env.BASE_IMAGE }}
+        run: |
+          set -euo pipefail
+          echo "Inspecting ${BASE}:latest"
+          docker buildx imagetools inspect "${BASE}:latest" | tee /tmp/inspect.txt
+          for plat in linux/amd64 linux/arm64; do
+            if ! grep -qE "Platform:\s*${plat}" /tmp/inspect.txt; then
+              echo "::error::${BASE}:latest manifest does not contain ${plat}; multi-arch promotion is broken."
+              exit 1
+            fi
+          done

@@ -154,17 +154,26 @@ WORKDIR /home/isabelle
 # `isabelle build Complex_Bounded_Operators` can find the AFP sources.
 # The overlay extends this ROOTS file to also include Layer1..Layer5.
 #
-# Force 64-bit PolyML (`x86_64-linux`; default picks `x86_64_32-linux`
-# which caps virtual address space at 4 GB and OOMs on the CBO heap-save
-# step). 64-bit heaps are ~50% larger so HOL-Analysis peak hits ~5-6 GB.
-# The CBO bake below runs `-j 1` (one session at a time) so peak stays
-# around 6 GB — comfortable headroom on the free GitHub-hosted
-# `ubuntu-24.04` runner (16 GB) that `build-isabelle-base-image.yml` uses.
+# Force 64-bit PolyML per arch: `x86_64-linux` (amd64) / `arm64-linux`
+# (arm64). On amd64 the default would pick `x86_64_32-linux`, which caps
+# virtual address space at 4 GB and OOMs on the CBO heap-save step;
+# `arm64-linux` is already 64-bit. 64-bit heaps are ~50% larger so
+# HOL-Analysis peak hits ~5-6 GB. The CBO bake below runs `-j 1` (one
+# session at a time) so peak stays ~6 GB — comfortable on the free
+# GitHub-hosted runners (16 GB) that `build-isabelle-base-image.yml`
+# uses (ubuntu-24.04 amd64 / ubuntu-24.04-arm arm64).
+#
+# arm64: the bundled PolyML 5.9.2-2 `arm64-linux` binary was historically
+# refused here (it SIGILLed at the Pure bootstrap on an older GitHub ARM
+# runner generation). A 2026-06 probe on the current `ubuntu-24.04-arm`
+# runner recompiled Pure + HOL cleanly with the bundled poly — no SIGILL —
+# so arm64 is re-enabled. The arm64 CBO bake + heap smoke in CI is the gate.
 RUN mkdir -p ~/.isabelle/${ISABELLE_VERSION}/etc && \
     echo "/opt/afp/thys" > ~/.isabelle/${ISABELLE_VERSION}/ROOTS && \
     case "$TARGETARCH" in \
       amd64) ML_PLATFORM="x86_64-linux" ;; \
-      *) echo "isabelle-base is amd64-only (bundled PolyML SIGILLs on ${TARGETARCH:-<unset>}); refusing to build" >&2; exit 1 ;; \
+      arm64) ML_PLATFORM="arm64-linux" ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH:-<unset>}" >&2; exit 1 ;; \
     esac && \
     printf '%s\n' \
         "ML_PLATFORM=\"${ML_PLATFORM}\"" \
