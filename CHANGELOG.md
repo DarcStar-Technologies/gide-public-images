@@ -57,6 +57,16 @@ adapted for a "we repackage upstream" repo:
 - Every build attaches **SLSA provenance + an SPDX SBOM**; `scan-published-images.yml`
   runs a scheduled Trivy CVE sweep. See [`README.md`](./README.md#provenance--security).
 
+## Keeping it current
+
+A CI gate (`.github/workflows/require-changelog.yml`) fails any PR that changes a
+published image's `tools/<image>.Dockerfile` without updating the matching
+`changelogs/<image>.md` — so a version bump (including Renovate's) adds its
+changelog entry in the same PR. For a change that does **not** affect a published
+image (comment-only edits, CI-only changes), apply the **`skip-changelog`** label
+to bypass the gate. Auto-stamping entries at promote time (Phase 2) is tracked in
+[#29](https://github.com/DarcStar-Technologies/gide-public-images/issues/29).
+
 ## Status
 
 This is the **initial backfill** (seeded 2026-06-03 from the then-current

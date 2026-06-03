@@ -1,0 +1,85 @@
+name: Require changelog entry
+
+# Phase-1 changelog gate (#29). When a PR changes a published image's
+# Dockerfile, require the matching `changelogs/<image>.md` to be updated in the
+# SAME PR, so the changelog stays current as bumps land. Bypass with the
+# `skip-changelog` label for changes that don't alter a published image
+# (comment-only edits, CI-only changes, etc.). Phase 2 (#29) will auto-stamp
+# entries at promote time and remove the manual step.
+#
+# Runs on EVERY PR (no `paths:` filter) and passes immediately when no image
+# Dockerfile changed. This is deliberate: a `paths`-filtered workflow never
+# reports a status on unrelated PRs, which would wedge a *required* status check
+# — so keep this gate unfiltered if you add it to branch protection.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  require-changelog:
+    name: Require changelog entry for image changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check changelog updated for touched image Dockerfiles
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+
+          # Escape hatch: a maintainer label for changes that don't alter a
+          # published image (comment/label tweaks, CI-only edits, etc.).
+          case ",${LABELS}," in
+            *,skip-changelog,*)
+              echo "::notice::'skip-changelog' label present — changelog gate bypassed."
+              exit 0 ;;
+          esac
+
+          # Each published image's Dockerfile -> its changelog file. The two
+          # source mirrors are documented inside gide-isabelle-base.md, which is
+          # driven by the same Dockerfile's ISABELLE_VERSION / AFP_* ARGs.
+          declare -A MAP=(
+            [tools/lean4-base.Dockerfile]=changelogs/gide-lean4-base.md
+            [tools/isabelle-base.Dockerfile]=changelogs/gide-isabelle-base.md
+            [tools/z3.Dockerfile]=changelogs/gide-z3.md
+            [tools/cvc5.Dockerfile]=changelogs/gide-cvc5.md
+            [tools/yices2.Dockerfile]=changelogs/gide-yices2.md
+            [tools/dreal.Dockerfile]=changelogs/gide-dreal.md
+            [tools/apalache.Dockerfile]=changelogs/gide-apalache.md
+          )
+
+          # Files changed by this PR (paginated; handles >30 files).
+          mapfile -t CHANGED < <(gh api --paginate "repos/${REPO}/pulls/${PR}/files" --jq '.[].filename')
+          changed() { printf '%s\n' "${CHANGED[@]}" | grep -qxF -- "$1"; }
+
+          missing=()
+          for df in "${!MAP[@]}"; do
+            if changed "$df" && ! changed "${MAP[$df]}"; then
+              missing+=("${df} -> ${MAP[$df]}")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            {
+              echo "### ❌ Missing changelog entry"
+              echo ""
+              echo "This PR changes a published image's Dockerfile but does not update its changelog:"
+              echo ""
+              for m in "${missing[@]}"; do echo "- \`${m}\`"; done
+              echo ""
+              echo "Add an entry to the changelog file(s) above (format: \`CHANGELOG.md\`),"
+              echo "or apply the **\`skip-changelog\`** label if this change does not affect the published image."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Missing changelog update for: ${missing[*]}"
+            exit 1
+          fi
+
+          echo "✅ Changelog gate passed (changelog updated for every touched image Dockerfile, or none touched)."
