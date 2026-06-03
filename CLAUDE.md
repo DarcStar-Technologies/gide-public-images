@@ -31,7 +31,7 @@ repo-scoped, so the private repo consumes these unchanged.
 | Image | Contents | Workflow | Arch |
 |---|---|---|---|
 | `gide-lean4-base` | Ubuntu + elan + Lean4 + pre-compiled Mathlib4 | `build-lean4-base-image.yml` | amd64 + arm64 |
-| `gide-isabelle-base` | Ubuntu + Isabelle + AFP + pre-baked CBO heap | `build-isabelle-base-image.yml` | amd64-only |
+| `gide-isabelle-base` | Ubuntu + Isabelle + AFP + pre-baked CBO + ODE heaps | `build-isabelle-base-image.yml` | amd64-only |
 | `gide-isabelle-source` / `gide-afp-source` | Verbatim upstream tarballs | `mirror-isabelle-distribution.yml` | n/a (`FROM scratch`) |
 | `gide-z3` / `gide-cvc5` / `gide-yices2` / `gide-dreal` / `gide-apalache` | SMT / model-checking solver binaries | `build-prover-images.yml` | see workflow |
 
