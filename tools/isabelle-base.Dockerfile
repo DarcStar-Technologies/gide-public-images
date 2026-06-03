@@ -42,13 +42,16 @@
 
 ARG TARGETARCH
 ARG ISABELLE_VERSION=Isabelle2025-2
-# SHA-256 of the upstream Isabelle distribution tarball (amd64;
-# `Isabelle2025-2_linux.tar.gz` from isabelle.in.tum.de/dist), checked
-# below before extract. The mirror copies the tarball verbatim, so this
-# single pin catches corruption at either hop (upstream->mirror and
-# mirror->build). Upstream ships no published SHA file; recompute on a
-# version bump with `curl -sL <upstream-url> | sha256sum`.
+# SHA-256 of the upstream Isabelle distribution tarball, checked below
+# before extract. Isabelle ships a SEPARATE tarball per arch (amd64
+# `Isabelle2025-2_linux.tar.gz`, arm64 `Isabelle2025-2_linux_arm.tar.gz`)
+# with DIFFERENT hashes, so the pin is per-arch — the heap-builder selects
+# by $TARGETARCH. The mirror copies the tarball verbatim, so this pin
+# catches corruption at either hop (upstream->mirror and mirror->build).
+# Upstream ships no published SHA file; recompute on a version bump with
+# `curl -sL <upstream-url> | sha256sum` (both arches).
 ARG ISABELLE_SHA256=a20a507bc7c1270d8be96a9f3fbec06345387789d2dc2c4d3df6260d47bfb33c
+ARG ISABELLE_SHA256_ARM64=650a9669b4a087675afb34294d82ded2f0704d47d580dd9ed45cddc9f1764bdd
 
 # AFP release pinned by dated tag for reproducibility (#1022). The
 # DATED tag `afp-2026-06-01` is the correct pin shape: rolling tags
@@ -107,6 +110,7 @@ FROM ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e57
 ARG TARGETARCH
 ARG ISABELLE_VERSION
 ARG ISABELLE_SHA256
+ARG ISABELLE_SHA256_ARM64
 ARG AFP_SHA256
 ARG AFP_DIRNAME
 
@@ -126,8 +130,14 @@ RUN apt-get update && \
     # SHA-256 before extracting. The mirror wrapper is `FROM scratch +
     # COPY` (verbatim bytes), so this one check covers both the
     # upstream->mirror and mirror->build hops. Upstream ships no
-    # published SHA file, so ISABELLE_SHA256 is computed at pin-bump time.
-    echo "${ISABELLE_SHA256}  /tmp/isabelle.tar.gz" | sha256sum -c - && \
+    # published SHA file, so the pins are computed at pin-bump time.
+    # Isabelle ships a different tarball per arch -> select the pin.
+    case "$TARGETARCH" in \
+      amd64) ISABELLE_SHA="$ISABELLE_SHA256" ;; \
+      arm64) ISABELLE_SHA="$ISABELLE_SHA256_ARM64" ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH:-<unset>}" >&2; exit 1 ;; \
+    esac && \
+    echo "${ISABELLE_SHA}  /tmp/isabelle.tar.gz" | sha256sum -c - && \
     cd /opt && tar xzf /tmp/isabelle.tar.gz && rm /tmp/isabelle.tar.gz && \
     ln -s /opt/${ISABELLE_VERSION} /opt/isabelle && \
     chown -R isabelle:isabelle /opt/${ISABELLE_VERSION} && \
