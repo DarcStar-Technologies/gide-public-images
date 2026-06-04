@@ -8,6 +8,7 @@
   "timezone": "UTC",
   "schedule": ["before 6am on monday"],
   "labels": ["dependencies"],
+  "platformAutomerge": true,
   "packageRules": [
     {
       "description": "Pin GitHub Actions to a digest (short SHA + version comment).",
@@ -30,6 +31,35 @@
       "matchManagers": ["dockerfile"],
       "matchFileNames": ["tools/isabelle-base.Dockerfile"],
       "enabled": false
+    },
+    {
+      "description": "Auto-merge GitHub Actions digest pins once the required checks pass (very low risk; the pinned tag/version is unchanged).",
+      "matchManagers": ["github-actions"],
+      "automerge": true
+    },
+    {
+      "description": "Auto-merge base-image (Ubuntu) digest / CVE refreshes once checks pass — these should land fast, so no stability delay. The post-merge publish smoke re-validates each image.",
+      "matchDatasources": ["docker"],
+      "matchUpdateTypes": ["digest", "pin", "pinDigest"],
+      "automerge": true
+    },
+    {
+      "description": "Auto-merge solver patch + minor bumps once checks pass. Each solver PR gets a real PR-time Smoke-validate build + version check, so green ~= the image builds and runs; a 3-day stability delay guards against a yanked release. Major bumps stay manual (default).",
+      "matchFileNames": [
+        "tools/z3.Dockerfile",
+        "tools/cvc5.Dockerfile",
+        "tools/yices2.Dockerfile",
+        "tools/dreal.Dockerfile",
+        "tools/apalache.Dockerfile"
+      ],
+      "matchUpdateTypes": ["patch", "minor"],
+      "automerge": true,
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Do NOT auto-merge the isabelle-base runtime ubuntu digest. That workflow is workflow_run-only (no PR-time build), so a green PR does not prove the image builds — a human acks the CVE rebuild. Ordered after the docker-digest rule so it overrides it for this file.",
+      "matchFileNames": ["tools/isabelle-base.Dockerfile"],
+      "automerge": false
     }
   ],
   "customManagers": [

@@ -1,0 +1,36 @@
+name: Renovate failure issues
+
+# #43: track failing Renovate PRs as GitHub issues (the complement to
+# auto-merging the green ones). A scheduled, self-healing reconcile — no event
+# plumbing: it opens a `renovate-failure` issue for any open `renovate/**` PR
+# whose CI is failing, and closes the issue once that PR passes, merges, or
+# closes. Renovate's Dependency Dashboard already lists failed updates; this
+# adds an assignable, labeled, notifiable work item.
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # every 6h; Renovate runs weekly, so this is ample
+  workflow_dispatch: {}
+
+permissions:
+  contents: read         # checkout the reconcile script
+  issues: write          # open / close tracking issues
+  pull-requests: read    # list Renovate PRs + their check rollup
+  checks: read
+
+concurrency:
+  group: renovate-failure-issues
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Track failing Renovate PRs as issues
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Reconcile tracking issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/renovate-failure-issues.sh "$REPO"
