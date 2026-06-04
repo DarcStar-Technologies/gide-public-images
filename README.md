@@ -69,6 +69,11 @@ digest for byte-exact reproducibility.
 ## Provenance & security
 
 - Each build attaches SLSA provenance + an SPDX SBOM at publish time.
+- Each image carries OCI annotations — `image.source` + `image.description`
+  (config labels) plus `image.version`, `image.revision`, `image.created`, and
+  `image.documentation` (a link to the image's [changelog](./CHANGELOG.md)) —
+  so `docker buildx imagetools inspect` surfaces the version, build provenance,
+  and where to read the notes.
 - `scan-published-images.yml` runs a scheduled Trivy CVE sweep, uploading SARIF
   to this repo's Security tab.
 - `prune-old-image-tags.yml` garbage-collects stale per-commit / candidate tags.
