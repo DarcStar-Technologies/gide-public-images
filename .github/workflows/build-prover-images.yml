@@ -242,6 +242,8 @@ jobs:
         # right platforms — not that the solver actually runs. Pull the
         # just-pushed image and run its version subcommand. amd64 only
         # (the runner's native arch); multi-arch images resolve to it.
+        # dReal is handled by the dedicated stdin-solve smoke below.
+        if: matrix.prover != 'dreal'
         env:
           IMAGE: ghcr.io/darcstar-technologies/gide-${{ matrix.prover }}
           SHA: ${{ github.sha }}
@@ -249,6 +251,31 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm "${IMAGE}:${SHA}" "${SMOKE}"
+
+      - name: Runtime smoke — dReal stdin solve (amd64)
+        # dReal needs a stronger smoke than `--version`: the regression in
+        # issue #52 left `--version` working while `--in` emitted no verdict.
+        # Replicate the EXACT downstream contract — `docker run <img> dreal
+        # <args>` (no ENTRYPOINT; binary name passed explicitly) — and feed a
+        # known-unsat QF_NRA query on stdin, asserting an `unsat` verdict. This
+        # catches both the doubled-entrypoint bug and any future `--in`
+        # regression in the binary itself.
+        if: matrix.prover == 'dreal'
+        env:
+          IMAGE: ghcr.io/darcstar-technologies/gide-dreal
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          query='(set-logic QF_NRA)
+          (declare-fun x () Real)
+          (assert (<= (+ (* x x) 1.0) 0.0))
+          (check-sat)'
+          out="$(printf '%s\n' "$query" | docker run --rm -i "${IMAGE}:${SHA}" dreal --in --precision 0.001)"
+          echo "dreal --in output: '${out}'"
+          case "$out" in
+            *unsat*) echo "dReal --in smoke OK (unsat)";;
+            *) echo "::error::dReal --in produced no 'unsat' verdict (got: '${out}') — see issue #52"; exit 1;;
+          esac
 
       # Phase 2 (#29): auto-create/update a GitHub Release per image-version on
       # publish — the automated publish feed (digest + provenance) recording
@@ -360,9 +387,31 @@ jobs:
           cache-from: type=gha,scope=prover-${{ matrix.prover }}
 
       - name: Runtime smoke (amd64)
+        # dReal is handled by the dedicated stdin-solve smoke below.
+        if: matrix.prover != 'dreal'
         env:
           IMAGE: gide-${{ matrix.prover }}:smoke
           SMOKE: ${{ matrix.smoke }}
         run: |
           set -euo pipefail
           docker run --rm "${IMAGE}" "${SMOKE}"
+
+      - name: Runtime smoke — dReal stdin solve (amd64)
+        # Replicate the downstream `docker run <img> dreal --in <args>` contract
+        # and assert an `unsat` verdict — see issue #52. Catches the doubled-
+        # entrypoint regression a bare `--version` smoke misses.
+        if: matrix.prover == 'dreal'
+        env:
+          IMAGE: gide-dreal:smoke
+        run: |
+          set -euo pipefail
+          query='(set-logic QF_NRA)
+          (declare-fun x () Real)
+          (assert (<= (+ (* x x) 1.0) 0.0))
+          (check-sat)'
+          out="$(printf '%s\n' "$query" | docker run --rm -i "${IMAGE}" dreal --in --precision 0.001)"
+          echo "dreal --in output: '${out}'"
+          case "$out" in
+            *unsat*) echo "dReal --in smoke OK (unsat)";;
+            *) echo "::error::dReal --in produced no 'unsat' verdict (got: '${out}') — see issue #52"; exit 1;;
+          esac
