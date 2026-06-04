@@ -5,6 +5,14 @@ symbolic model checker on a minimal base; **amd64 + arm64**). Format and
 conventions: see the [root CHANGELOG](../CHANGELOG.md). Licenses:
 [THIRD-PARTY-NOTICES](../THIRD-PARTY-NOTICES.md).
 
+<!-- renovate-pr-40 -->
+## [0.57.0] — 2026-06-04
+**Digest:** _published on merge — see GitHub Release `gide-apalache-0.57.0`._
+
+### Composition (this repo)
+- Base image / digest refresh via Renovate (#40) — no upstream version change. Upstream release notes are in PR #40; the published digest + provenance land in the GitHub Release on merge.
+
+
 ## [0.57.0] — 2026-06-03
 **Digest:** `sha256:4d903363c8ef50baa6debb970c6022135bd93d285aff61db26c85883689ac609`
 
