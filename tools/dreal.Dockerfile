@@ -67,4 +67,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /tmp/dreal.deb /var/lib/apt/lists/*
 LABEL org.opencontainers.image.source="https://github.com/DarcStar-Technologies/gide-public-images" \
       org.opencontainers.image.description="dReal delta-complete SMT solver"
-ENTRYPOINT ["dreal"]
+# DELIBERATELY no `ENTRYPOINT ["dreal"]` (unlike the sibling z3/cvc5/yices2/
+# apalache images). The downstream `gide` portfolio harness invokes dReal as
+# `docker run <image> dreal <args...>` via the `tools/dreal` host wrapper —
+# the binary name is passed explicitly (that is what the /usr/local/bin/dreal
+# symlink above is for). With `ENTRYPOINT ["dreal"]` set, that invocation
+# becomes `dreal dreal <args...>`: dReal reads the extra `dreal` token as a
+# stray positional input-file argument and silently emits no verdict on
+# `--in` (empty stdout, exit 0) / a usage error on a file argument — see
+# issue #52. The previous known-good build carried no entrypoint; keep it that
+# way. The inherited `CMD ["/bin/bash"]` from the base remains the default.
