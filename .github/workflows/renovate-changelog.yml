@@ -72,11 +72,16 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           BASE_BRANCH: ${{ github.base_ref }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           set -euo pipefail
           git fetch -q origin "${BASE_BRANCH}"
           DATE="$(date -u +%Y-%m-%d)"
-          bash .github/scripts/renovate-changelog.sh "${BASE_REF}" "${PR}" "${REPO}" "${DATE}"
+          # Renovate embeds the upstream release notes in the PR body; pass it
+          # so the entry captures them (the script extracts the Release Notes
+          # section). Written to a file to keep multi-line content intact.
+          BODY_FILE="$(mktemp)"; printf '%s' "${PR_BODY:-}" > "$BODY_FILE"
+          bash .github/scripts/renovate-changelog.sh "${BASE_REF}" "${PR}" "${REPO}" "${DATE}" "${BODY_FILE}"
 
       - name: Commit & push to the PR branch
         if: steps.check.outputs.enabled == 'true' && steps.gen.outputs.changed == '1'
