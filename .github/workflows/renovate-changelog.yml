@@ -1,0 +1,93 @@
+name: Renovate changelog
+
+# Option A of #43: when Renovate opens/updates a PR that changes a published
+# image's `tools/<image>.Dockerfile`, append the matching `changelogs/<image>.md`
+# entry to the PR branch so the required `Require changelog entry for image
+# changes` gate passes and the curated changelog stays current — which is what
+# lets a green Renovate bump be auto-merged.
+#
+# The append commit is pushed with a BOT token (`secrets.CHANGELOG_BOT_TOKEN`),
+# NOT the default GITHUB_TOKEN: pushes made with GITHUB_TOKEN do not re-trigger
+# workflows, so the now-required checks would never re-run on the appended commit
+# and the PR would deadlock. A fine-grained PAT or GitHub App token re-triggers
+# them normally.
+#
+#   One-time setup (admin): create a fine-grained PAT (or GitHub App
+#   installation token) scoped to THIS repo with `Contents: read and write` +
+#   `Pull requests: read`, and save it as the `CHANGELOG_BOT_TOKEN` repo secret.
+#
+# Until the secret exists the job no-ops with a notice (nothing breaks); a
+# Renovate Dockerfile bump then needs a manual changelog entry or the
+# `skip-changelog` label to merge.
+#
+# Loop-safe: each entry carries a `<!-- renovate-pr-<N> -->` marker, so the run
+# our own push triggers finds the marker and makes no further commit.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: renovate-changelog-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  append-changelog:
+    name: Append changelog for Renovate bump
+    # Renovate's own branches only (same-repo, so secrets are available; only
+    # repo-write users can push a `renovate/**` branch).
+    if: startsWith(github.head_ref, 'renovate/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check bot token is configured
+        id: check
+        env:
+          TOKEN: ${{ secrets.CHANGELOG_BOT_TOKEN }}
+        run: |
+          if [ -z "${TOKEN}" ]; then
+            echo "::warning::CHANGELOG_BOT_TOKEN is not set — skipping changelog auto-append. Add the secret (Contents:rw, Pull requests:read) to enable, or label the PR 'skip-changelog'."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout PR branch
+        if: steps.check.outputs.enabled == 'true'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          token: ${{ secrets.CHANGELOG_BOT_TOKEN }}
+
+      - name: Append changelog entries for changed image Dockerfiles
+        if: steps.check.outputs.enabled == 'true'
+        id: gen
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          BASE_BRANCH: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch -q origin "${BASE_BRANCH}"
+          DATE="$(date -u +%Y-%m-%d)"
+          bash .github/scripts/renovate-changelog.sh "${BASE_REF}" "${PR}" "${REPO}" "${DATE}"
+
+      - name: Commit & push to the PR branch
+        if: steps.check.outputs.enabled == 'true' && steps.gen.outputs.changed == '1'
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add changelogs/
+          git commit -m "docs(changelog): record image update for Renovate PR #${PR}" \
+                     -m "Auto-appended so the required changelog gate passes (Option A, #43)."
+          git push origin "HEAD:${HEAD_BRANCH}"
