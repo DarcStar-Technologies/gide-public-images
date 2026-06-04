@@ -1,0 +1,7 @@
+name: zz-smoke-delete (REMOVE)
+on: [bogus_smoke_event_xyz]
+jobs:
+  x:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: 'true'
