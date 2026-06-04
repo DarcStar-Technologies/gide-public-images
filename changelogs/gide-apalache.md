@@ -12,6 +12,13 @@ conventions: see the [root CHANGELOG](../CHANGELOG.md). Licenses:
 ### Composition (this repo)
 - Bumped to `0.58.0` (from `0.57.0`) via Renovate (#42). Upstream release notes are in PR #42; the published digest + provenance land in the GitHub Release on merge.
 
+<!-- renovate-pr-40 -->
+## [0.58.0] — 2026-06-04
+**Digest:** _published on merge — see GitHub Release `gide-apalache-0.58.0`._
+
+### Composition (this repo)
+- Base image (temurin JRE) digest refresh via Renovate (#40), on top of 0.58.0. Upstream release notes are in PR #40; the published digest + provenance land in the GitHub Release on merge.
+
 
 ## [0.57.0] — 2026-06-03
 **Digest:** `sha256:4d903363c8ef50baa6debb970c6022135bd93d285aff61db26c85883689ac609`
