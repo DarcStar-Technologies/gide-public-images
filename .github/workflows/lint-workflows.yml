@@ -20,9 +20,13 @@ name: Lint workflows
 # its `@sha256:` digest together.
 
 on:
+  # Runs on EVERY pull request (no `paths:` filter) so it can serve as a
+  # REQUIRED status check on `main`: a path-filtered required check never
+  # reports on unrelated PRs and would wedge their merge. actionlint lints
+  # all workflows in seconds, so always-on is cheap. The `push` trigger
+  # stays path-scoped — post-merge validation only matters when a workflow
+  # actually changed.
   pull_request:
-    paths:
-      - ".github/workflows/**"
   push:
     branches: [main]
     paths:
