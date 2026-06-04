@@ -5,12 +5,19 @@ symbolic model checker on a minimal base; **amd64 + arm64**). Format and
 conventions: see the [root CHANGELOG](../CHANGELOG.md). Licenses:
 [THIRD-PARTY-NOTICES](../THIRD-PARTY-NOTICES.md).
 
-<!-- renovate-pr-40 -->
-## [0.57.0] — 2026-06-04
-**Digest:** _published on merge — see GitHub Release `gide-apalache-0.57.0`._
+<!-- renovate-pr-42 -->
+## [0.58.0] — 2026-06-04
+**Digest:** _published on merge — see GitHub Release `gide-apalache-0.58.0`._
 
 ### Composition (this repo)
-- Base image / digest refresh via Renovate (#40) — no upstream version change. Upstream release notes are in PR #40; the published digest + provenance land in the GitHub Release on merge.
+- Bumped to `0.58.0` (from `0.57.0`) via Renovate (#42). Upstream release notes are in PR #42; the published digest + provenance land in the GitHub Release on merge.
+
+<!-- renovate-pr-40 -->
+## [0.58.0] — 2026-06-04
+**Digest:** _published on merge — see GitHub Release `gide-apalache-0.58.0`._
+
+### Composition (this repo)
+- Base image (temurin JRE) digest refresh via Renovate (#40), on top of 0.58.0. Upstream release notes are in PR #40; the published digest + provenance land in the GitHub Release on merge.
 
 
 ## [0.57.0] — 2026-06-03
