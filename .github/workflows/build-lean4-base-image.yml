@@ -149,8 +149,15 @@ jobs:
           platforms: ${{ matrix.platform }}
           # `push-by-digest=true` defers tag assignment; the merge job
           # below stitches the per-arch digests into a multi-arch
-          # manifest list under the candidate tag.
-          outputs: type=image,name=${{ env.BASE_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          # manifest list under the candidate tag. `oci-mediatypes=true`
+          # makes each arch an OCI image manifest so that merge yields an
+          # OCI image INDEX (not a Docker manifest list v2) — required for
+          # the promote step's `imagetools create --annotation "index:…"`
+          # to actually attach the OCI annotations. A Docker manifest list
+          # has no annotations field, so without this they are silently
+          # dropped (the bug this fixes). Single image manifest per arch,
+          # so the merge is unaffected (unlike mode=max attestations below).
+          outputs: type=image,name=${{ env.BASE_IMAGE }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
           build-args: ${{ steps.args.outputs.build_args }}
           # Registry-backed buildkit cache (NOT type=gha): the ~14 GB
           # Mathlib base would blow GitHub Actions' 10 GB/repo cache cap
