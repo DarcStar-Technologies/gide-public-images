@@ -59,13 +59,20 @@ adapted for a "we repackage upstream" repo:
 
 ## Keeping it current
 
-A CI gate (`.github/workflows/require-changelog.yml`) fails any PR that changes a
-published image's `tools/<image>.Dockerfile` without updating the matching
-`changelogs/<image>.md` — so a version bump (including Renovate's) adds its
-changelog entry in the same PR. For a change that does **not** affect a published
-image (comment-only edits, CI-only changes), apply the **`skip-changelog`** label
-to bypass the gate. Auto-stamping entries at promote time (Phase 2) is tracked in
-[#29](https://github.com/DarcStar-Technologies/gide-public-images/issues/29).
+Two mechanisms keep this current:
+
+- **These curated files** are the human-authored source of record (upstream notes
+  + composition). A CI gate (`.github/workflows/require-changelog.yml`) fails any
+  PR that changes a published image's `tools/<image>.Dockerfile` without updating
+  the matching `changelogs/<image>.md`, so a version bump (including Renovate's)
+  adds its entry in the same PR. For a change that does **not** affect a published
+  image (comment-only / CI-only edits), apply the **`skip-changelog`** label to
+  bypass the gate.
+- **An automated publish feed:** every publish also creates or updates a
+  per-version **[GitHub Release](https://github.com/DarcStar-Technologies/gide-public-images/releases)**
+  (`gide-<image>-<version>`) with the published digest + build provenance —
+  including the weekly CVE-refresh rebuilds that carry no bump PR. (Phase 2 of
+  [#29](https://github.com/DarcStar-Technologies/gide-public-images/issues/29).)
 
 ## Status
 

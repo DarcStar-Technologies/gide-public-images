@@ -300,7 +300,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     permissions:
-      contents: read
+      contents: write   # publish a GitHub Release per version (Phase 2, #29)
       packages: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -375,6 +375,47 @@ jobs:
               exit 1
             fi
           done
+
+      # Phase 2 (#29): auto-create/update a GitHub Release per image-version on
+      # publish — the automated publish feed (digest + provenance) that records
+      # every publish incl. weekly CVE rebuilds, which carry no bump PR. The
+      # curated changelogs/<image>.md (human-authored upstream notes) is kept
+      # current by the Phase-1 gate on bump PRs. Non-blocking: the image is
+      # already live, so a release hiccup must not red the publish.
+      - name: Publish GitHub Release
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ env.BASE_IMAGE }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          DIGEST="$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{.Manifest.Digest}}')"
+          CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          TAG="gide-lean4-base-${VERSION}"
+          NOTES="$(mktemp)"
+          {
+            echo "Published \`${IMAGE}:${VERSION}\` — Lean4 toolchain + pre-compiled Mathlib4."
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Digest | \`${DIGEST}\` |"
+            echo "| Built | ${CREATED} from \`${SHA}\` |"
+            echo "| Pull | \`docker pull ${IMAGE}@${DIGEST}\` |"
+            echo ""
+            echo "- Changelog & upstream notes: https://github.com/${REPO}/blob/main/changelogs/gide-lean4-base.md"
+            echo "- Inspect: \`docker buildx imagetools inspect ${IMAGE}:${VERSION}\`"
+            echo "- SLSA provenance + SPDX SBOM attached as OCI referrers."
+          } > "$NOTES"
+          if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+            gh release edit "$TAG" -R "$REPO" --title "gide-lean4-base ${VERSION}" --notes-file "$NOTES" --latest=false
+            echo "updated release $TAG -> ${DIGEST}"
+          else
+            gh release create "$TAG" -R "$REPO" --title "gide-lean4-base ${VERSION}" --notes-file "$NOTES" --target "$SHA" --latest=false
+            echo "created release $TAG -> ${DIGEST}"
+          fi
 
   smoke-validate-pr:
     # PR-time gate: build the base Dockerfile with `push: false` so a

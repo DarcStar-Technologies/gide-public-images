@@ -101,6 +101,9 @@ jobs:
   build-push:
     name: Build & push (${{ matrix.prover }})
     if: github.event_name != 'pull_request'
+    permissions:
+      contents: write   # publish a GitHub Release per version (Phase 2, #29)
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -246,6 +249,47 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm "${IMAGE}:${SHA}" "${SMOKE}"
+
+      # Phase 2 (#29): auto-create/update a GitHub Release per image-version on
+      # publish — the automated publish feed (digest + provenance) recording
+      # every publish incl. weekly CVE rebuilds, which carry no bump PR. The
+      # curated changelogs/<image>.md is kept current by the Phase-1 gate on
+      # bump PRs. Non-blocking: the image is already live before this runs.
+      - name: Publish GitHub Release (${{ matrix.prover }})
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ghcr.io/darcstar-technologies/gide-${{ matrix.prover }}
+          PROVER: ${{ matrix.prover }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          CREATED: ${{ steps.meta.outputs.created }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG="gide-${PROVER}-${VERSION}"
+          NOTES="$(mktemp)"
+          {
+            echo "Published \`${IMAGE}:${VERSION}\`."
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Digest | \`${DIGEST}\` |"
+            echo "| Built | ${CREATED} from \`${SHA}\` |"
+            echo "| Pull | \`docker pull ${IMAGE}@${DIGEST}\` |"
+            echo ""
+            echo "- Changelog & upstream notes: https://github.com/${REPO}/blob/main/changelogs/gide-${PROVER}.md"
+            echo "- Inspect: \`docker buildx imagetools inspect ${IMAGE}:${VERSION}\`"
+            echo "- SLSA provenance + SPDX SBOM attached as OCI referrers."
+          } > "$NOTES"
+          if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+            gh release edit "$TAG" -R "$REPO" --title "gide-${PROVER} ${VERSION}" --notes-file "$NOTES" --latest=false
+            echo "updated release $TAG -> ${DIGEST}"
+          else
+            gh release create "$TAG" -R "$REPO" --title "gide-${PROVER} ${VERSION}" --notes-file "$NOTES" --target "$SHA" --latest=false
+            echo "created release $TAG -> ${DIGEST}"
+          fi
 
   smoke-validate-pr:
     # PR-time gate: build the Dockerfile with `push: false` so a
