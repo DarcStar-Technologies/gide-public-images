@@ -140,6 +140,17 @@ jobs:
             echo 'EOF_BA'
           } >> "$GITHUB_OUTPUT"
 
+      - name: Resolve image metadata (OCI labels)
+        id: meta
+        env:
+          MATHLIB_REV_IN: ${{ inputs.mathlib_rev }}
+        run: |
+          set -euo pipefail
+          v="${MATHLIB_REV_IN:-}"
+          [ -n "$v" ] || v="$(grep -m1 '^ARG MATHLIB_REV=' tools/lean4-base.Dockerfile | sed 's/^ARG MATHLIB_REV=//')"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push base by digest
         id: build
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
@@ -159,6 +170,17 @@ jobs:
           # so the merge is unaffected (unlike mode=max attestations below).
           outputs: type=image,name=${{ env.BASE_IMAGE }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
           build-args: ${{ steps.args.outputs.build_args }}
+          # Config-level OCI labels — override the labels inherited from the
+          # `FROM ubuntu:26.04` base (title=ubuntu, version=26.04, …) so
+          # `docker inspect` shows this image's metadata, consistent with the
+          # index annotations stamped at promote. source/description are set
+          # in the Dockerfile.
+          labels: |
+            org.opencontainers.image.title=gide-lean4-base
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/main/changelogs/gide-lean4-base.md
           # Registry-backed buildkit cache (NOT type=gha): the ~14 GB
           # Mathlib base would blow GitHub Actions' 10 GB/repo cache cap
           # and thrash. A GHCR `:buildcache-<arch>` image has no cap and

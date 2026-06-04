@@ -190,6 +190,21 @@ jobs:
             echo 'EOF_BA'
           } >> "$GITHUB_OUTPUT"
 
+      - name: Resolve image metadata (OCI labels)
+        id: meta
+        env:
+          ISABELLE_VERSION_IN: ${{ inputs.isabelle_version }}
+          AFP_URL_IN: ${{ inputs.afp_url }}
+        run: |
+          set -euo pipefail
+          iv="${ISABELLE_VERSION_IN:-}"
+          [ -n "$iv" ] || iv="$(grep -m1 '^ARG ISABELLE_VERSION=' tools/isabelle-base.Dockerfile | sed 's/^ARG ISABELLE_VERSION=//')"
+          at=""
+          if [ -n "$AFP_URL_IN" ]; then at="${AFP_URL_IN##*/}"; at="${at%.tar.gz}"; fi
+          [ -n "$at" ] || at="$(grep -m1 '^ARG AFP_DATED_TAG=' tools/isabelle-base.Dockerfile | sed 's/^ARG AFP_DATED_TAG=//')"
+          echo "version=${iv}-${at}" >> "$GITHUB_OUTPUT"
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push base candidate
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
@@ -199,6 +214,17 @@ jobs:
           push: true
           tags: ${{ env.BASE_IMAGE }}:${{ env.CANDIDATE_TAG }}
           build-args: ${{ steps.args.outputs.build_args }}
+          # Config-level OCI labels — override the ones inherited from the
+          # `FROM ubuntu:26.04` runtime base (title=ubuntu, version=26.04,
+          # created=<ubuntu build date>) so `docker inspect` shows THIS
+          # image's metadata, consistent with the index annotations stamped
+          # at promote. source/description are set in the Dockerfile.
+          labels: |
+            org.opencontainers.image.title=gide-isabelle-base
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/main/changelogs/gide-isabelle-base.md
           # Registry-backed buildkit cache (NOT type=gha): the ~12 GB
           # Isabelle/AFP/CBO base would blow GitHub Actions' 10 GB/repo
           # cache cap and thrash. A GHCR `:buildcache-amd64` image has no
