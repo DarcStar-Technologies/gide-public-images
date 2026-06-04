@@ -64,10 +64,13 @@ Two mechanisms keep this current:
 - **These curated files** are the human-authored source of record (upstream notes
   + composition). A CI gate (`.github/workflows/require-changelog.yml`) fails any
   PR that changes a published image's `tools/<image>.Dockerfile` without updating
-  the matching `changelogs/<image>.md`, so a version bump (including Renovate's)
-  adds its entry in the same PR. For a change that does **not** affect a published
-  image (comment-only / CI-only edits), apply the **`skip-changelog`** label to
-  bypass the gate.
+  the matching `changelogs/<image>.md`, so a version bump adds its entry in the
+  same PR. **Renovate bumps** get this entry **auto-appended** to the PR branch by
+  `.github/workflows/renovate-changelog.yml` (Option A of
+  [#43](https://github.com/DarcStar-Technologies/gide-public-images/issues/43)),
+  so they satisfy the gate hands-free. For a change that does **not** affect a
+  published image (comment-only / CI-only edits), apply the **`skip-changelog`**
+  label to bypass the gate.
 - **An automated publish feed:** every publish also creates or updates a
   per-version **[GitHub Release](https://github.com/DarcStar-Technologies/gide-public-images/releases)**
   (`gide-<image>-<version>`) with the published digest + build provenance —
