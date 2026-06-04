@@ -9,15 +9,32 @@ conventions: see the [root CHANGELOG](../CHANGELOG.md). Licenses:
 ## [0.58.0] — 2026-06-04
 **Digest:** _published on merge — see GitHub Release `gide-apalache-0.58.0`._
 
+### Upstream
+- Apalache `0.58.0` — [release notes](https://github.com/apalache-mc/apalache/releases/tag/v0.58.0)
+
+<details><summary>Upstream release notes (backfilled from the upstream release)</summary>
+
+## 0.58.0 - 2026-05-29
+
+### Features
+
+- Added experimental CVC5 support as an SMT solver backend for the OOPSLA19 encoding.
+
+### Bug fixes
+
+- Fixed a `ClassCastException` / `AssertionError` crash during `--temporal` checking when `Next` contains an `IF` or `CASE` whose branches return sets or functions and whose body contains a nested `\/` or `/\` of three or more terms, see #2107.
+
+</details>
+
 ### Composition (this repo)
-- Bumped to `0.58.0` (from `0.57.0`) via Renovate (#42). Upstream release notes are in PR #42; the published digest + provenance land in the GitHub Release on merge.
+- Bumped to `0.58.0` (from `0.57.0`) via Renovate (#42).
 
 <!-- renovate-pr-40 -->
 ## [0.58.0] — 2026-06-04
 **Digest:** _published on merge — see GitHub Release `gide-apalache-0.58.0`._
 
 ### Composition (this repo)
-- Base image (temurin JRE) digest refresh via Renovate (#40), on top of 0.58.0. Upstream release notes are in PR #40; the published digest + provenance land in the GitHub Release on merge.
+- Base image (temurin JRE) digest refresh via Renovate (#40), on top of 0.58.0 — no upstream version change. See PR #40.
 
 
 ## [0.57.0] — 2026-06-03
