@@ -1,0 +1,206 @@
+# DIAGNOSTIC workflow (issue #54) — NOT a production build. Reproduces the
+# Isabelle headless-server `session_start` hang that the pre-baked ODE heap
+# intermittently triggers, on the standard (slower) GitHub-hosted runner where
+# it actually manifests (it does NOT reproduce on fast dev hardware). Pulls the
+# published ODE base by digest, drives `isabelle server` + `session_start` in a
+# loop via a raw /dev/tcp protocol client, and on the hang signature (server
+# idle, no `poly`/ML process, no terminal FINISHED) captures a JVM thread dump
+# of the stuck server. Artifacts (loop log + thread dump) are uploaded.
+#
+# Free standard runner only (ubuntu-24.04), per repo policy. workflow_dispatch
+# only — never on push/cron. Delete once #54 is resolved.
+name: repro-isabelle-ode-daemon-hang
+
+on:
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: gide-isabelle-base digest to test (ODE build by default)
+        default: sha256:d89aba7fb48a2ac300be8103885f82e7b9f089644e99d16f6a4372466bdc9185
+      iterations:
+        description: max session_start runs before giving up
+        default: "12"
+      wait_seconds:
+        description: per-run ceiling (slow runner; a real hang is caught earlier via no-poly)
+        default: "150"
+      use_probe:
+        description: build the Probe bridge session (sessions ODE) + register it, to raise the hang rate toward the issue's deterministic case
+        default: "true"
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: repro-ode-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repro:
+    name: Reproduce headless session_start hang
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Authenticate to GHCR (avoids anonymous pull rate limits)
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull ODE base
+        env:
+          IMG: ghcr.io/darcstar-technologies/gide-isabelle-base@${{ inputs.digest }}
+        run: |
+          set -euo pipefail
+          docker pull "$IMG"
+          echo "store heaps shipped in this image:"
+          docker run --rm --entrypoint bash "$IMG" -lc \
+            'ls -1 ~/.isabelle/Isabelle2025-2/heaps/*/ | grep -v "^log$" | sort'
+
+      - name: Write repro harness
+        run: |
+          set -euo pipefail
+          mkdir -p repro
+          cat > repro/ROOT <<'ROOTEOF'
+          session Probe = "Complex_Bounded_Operators" +
+            sessions
+              "Ordinary_Differential_Equations"
+          ROOTEOF
+
+          # probe.sh: one session_start attempt with poly-aware hang detection.
+          # FINISHED = healthy. No `poly` ever spawned by 45s (the issue's exact
+          # signature) = real HANG -> dump the JVM. WAIT exceeded but poly was
+          # running = SLOW (legit slow hardware, not the bug).
+          cat > repro/probe.sh <<'PROBEEOF'
+          #!/usr/bin/env bash
+          set -u
+          SESSION="${1:-Complex_Bounded_Operators}"
+          WAIT="${2:-150}"
+          OUT="${3:-/tmp/result.txt}"
+          NAME="probe_$$_$RANDOM"
+          JDK=/opt/Isabelle2025-2/contrib/jdk-21.0.9/x86_64-linux/bin
+          : > "$OUT"; log(){ echo "$@" >> "$OUT"; }
+
+          # isabelle server runs in the foreground -> background it.
+          isabelle server -n "$NAME" -L /tmp/srv_$NAME.log >/tmp/srv_$NAME.info 2>>"$OUT" &
+          SRV_PID=$!
+          for w in $(seq 1 60); do [ -s /tmp/srv_$NAME.info ] && break; sleep 0.5; done
+          INFO=$(cat /tmp/srv_$NAME.info)
+          PORT=$(sed -n 's/.*127.0.0.1:\([0-9]*\).*/\1/p' <<<"$INFO")
+          PW=$(sed -n 's/.*password "\([^"]*\)".*/\1/p' <<<"$INFO")
+          log "server=$NAME port=$PORT"
+
+          ok=0
+          for i in $(seq 1 60); do
+            if exec 3<>/dev/tcp/127.0.0.1/$PORT 2>/dev/null; then ok=1; break; fi
+            sleep 0.5
+          done
+          [ "$ok" = 1 ] || { log "CONNECT_FAIL"; isabelle server -n "$NAME" -x >/dev/null 2>&1; exit 1; }
+
+          printf '%s\n' "$PW" >&3
+          IFS= read -r -t 10 g <&3; log "greeting: ${g:0:70}"
+          log "=== sending session_start $SESSION ==="
+          printf 'session_start {"session": "%s"}\n' "$SESSION" >&3
+
+          result=PENDING; n=0; start=$SECONDS; poly_seen=0
+          while :; do
+            el=$(( SECONDS - start ))
+            if IFS= read -r -t 1 line <&3; then
+              n=$((n+1))
+              case "$line" in *FINISHED*) result=FINISHED; break;; *FAILED*) result=FAILED; break;; esac
+            fi
+            pgrep -f 'polyml-.*/poly' >/dev/null 2>&1 && poly_seen=1
+            # Real hang signature: ML process never spawned long past healthy time.
+            if [ $poly_seen -eq 0 ] && [ $el -ge 45 ]; then result=HANG; break; fi
+            if [ $el -ge "$WAIT" ]; then { [ $poly_seen -eq 1 ] && result=SLOW || result=HANG; }; break; fi
+          done
+          log "RESULT=$result elapsed=$(( SECONDS - start ))s replies=$n poly_seen=$poly_seen"
+          log "poly_now: $(pgrep -af 'polyml-.*/poly' | head -1 || echo none)"
+
+          if [ "$result" = HANG ]; then
+            JPID=$(pgrep -f "jdk-21.*java .*server -n $NAME" | head -1)
+            log "=== HANG (no poly): jstack pid=$JPID ==="
+            "$JDK/jstack" -l "$JPID" > /tmp/jstack_$NAME.txt 2>&1
+            log "--- resolution-related frames (Sessions/Build/Store/Heap/deps/Headless) ---"
+            grep -nE 'isabelle\.(Sessions|Build|Store|Headless|Dump|Resources|Database)|Heap|\.deps|build_process|load_structure|Library\$' /tmp/jstack_$NAME.txt >> "$OUT" || echo "  (none — server idle, task never dispatched)" >> "$OUT"
+            log "--- isabelle thread name :: state ---"
+            awk '/^"Isabelle/{n=$0; getline s; print n" :: "s}' /tmp/jstack_$NAME.txt >> "$OUT"
+            cp /tmp/jstack_$NAME.txt /tmp/jstack_latest.txt
+          fi
+          exec 3>&- 3<&-
+          isabelle server -n "$NAME" -x >/dev/null 2>&1; kill $SRV_PID 2>/dev/null
+          log "DONE"
+          PROBEEOF
+
+          # loop.sh: repeat until a real HANG is caught (or N tries exhausted).
+          cat > repro/loop.sh <<'LOOPEOF'
+          #!/usr/bin/env bash
+          set -u
+          N="${1:-12}"; WAIT="${2:-150}"
+          : > /tmp/loop.log
+          for k in $(seq 1 "$N"); do
+            for s in $(isabelle server -l 2>/dev/null | sed -n 's/^server "\([^"]*\)".*/\1/p'); do isabelle server -n "$s" -x >/dev/null 2>&1; done
+            bash /home/isabelle/repro/probe.sh Complex_Bounded_Operators "$WAIT" /tmp/r_$k.txt
+            line=$(grep -oE 'RESULT=[A-Z]* elapsed=[0-9]*s .*poly_seen=[0-9]' /tmp/r_$k.txt | head -1)
+            echo "run $k: $line" | tee -a /tmp/loop.log
+            if grep -q 'RESULT=HANG' /tmp/r_$k.txt; then
+              echo "HANG CAUGHT on run $k" | tee -a /tmp/loop.log
+              cp /tmp/r_$k.txt /tmp/hang_result.txt
+              break
+            fi
+          done
+          echo "LOOP_DONE" | tee -a /tmp/loop.log
+          LOOPEOF
+          chmod +x repro/*.sh
+
+      - name: Run repro loop
+        env:
+          IMG: ghcr.io/darcstar-technologies/gide-isabelle-base@${{ inputs.digest }}
+          ITERS: ${{ inputs.iterations }}
+          WAITS: ${{ inputs.wait_seconds }}
+          USE_PROBE: ${{ inputs.use_probe }}
+        run: |
+          set -euo pipefail
+          docker run -d --name isa --entrypoint sleep "$IMG" infinity
+          docker cp repro isa:/home/isabelle/repro
+          # files land root-owned after cp; make them readable/executable for the isabelle user
+          docker exec -u root isa bash -lc 'chmod -R a+rX /home/isabelle/repro'
+          if [ "$USE_PROBE" = "true" ]; then
+            echo "::group::build Probe bridge heap (sessions ODE) + register dir"
+            docker exec isa bash -lc 'cd /home/isabelle/repro && isabelle build -b -d . Probe'
+            docker exec isa bash -lc 'grep -q "/home/isabelle/repro" ~/.isabelle/Isabelle2025-2/ROOTS || echo "/home/isabelle/repro" >> ~/.isabelle/Isabelle2025-2/ROOTS; cat ~/.isabelle/Isabelle2025-2/ROOTS'
+            echo "::endgroup::"
+          fi
+          docker exec isa bash -lc "bash /home/isabelle/repro/loop.sh ${ITERS} ${WAITS}"
+          # collect artifacts out of the container
+          mkdir -p repro-out
+          docker cp isa:/tmp/loop.log repro-out/ 2>/dev/null || true
+          docker cp isa:/tmp/hang_result.txt repro-out/ 2>/dev/null || true
+          docker cp isa:/tmp/jstack_latest.txt repro-out/ 2>/dev/null || true
+          for k in $(seq 1 "${ITERS}"); do docker cp "isa:/tmp/r_$k.txt" "repro-out/run_$k.txt" 2>/dev/null || true; done
+
+      - name: Summarize
+        if: always()
+        run: |
+          echo "## Isabelle ODE-heap daemon repro" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat repro-out/loop.log >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "(no loop.log)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if grep -q 'HANG CAUGHT' repro-out/loop.log 2>/dev/null; then
+            echo "::warning::Headless session_start HANG reproduced on the ubuntu-24.04 runner — thread dump in artifacts (jstack_latest.txt)."
+            echo "### Stuck server thread dump (excerpt)" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -E '^"Isabelle|RESULT=|resolution-related|::|task never dispatched' repro-out/hang_result.txt >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::notice::No hang reproduced in ${{ inputs.iterations }} runs on this runner."
+          fi
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: isabelle-ode-repro
+          path: repro-out/
+          if-no-files-found: warn
