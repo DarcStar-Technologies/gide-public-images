@@ -138,7 +138,7 @@ jobs:
     # runs fast (only the changed layer rebuilds).
     timeout-minutes: 300
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       # Auth MUST come before `Set up Docker Buildx` so the
       # docker-container builder mounts `~/.docker/config.json` with
@@ -327,7 +327,7 @@ jobs:
       contents: write   # publish a GitHub Release per version (Phase 2, #29)
       packages: write
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Authenticate to GHCR
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
