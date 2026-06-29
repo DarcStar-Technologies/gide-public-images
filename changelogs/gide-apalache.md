@@ -6,6 +6,25 @@ conventions: see the [root CHANGELOG](../CHANGELOG.md). Licenses:
 [THIRD-PARTY-NOTICES](../THIRD-PARTY-NOTICES.md).
 
 <!-- renovate-pr-42 -->
+<!-- renovate-pr-57 -->
+## [0.58.2] — 2026-06-29
+**Digest:** _published on merge — see GitHub Release `gide-apalache-0.58.2`._
+
+### Upstream
+- Apalache `0.58.2` — [release notes](https://github.com/apalache-mc/apalache/releases/tag/v0.58.2)
+
+<details><summary>Upstream release notes (captured from PR #57)</summary>
+
+### [`v0.58.2`](https://redirect.github.com/apalache-mc/apalache/blob/HEAD/CHANGES.md#0582---2026-06-22)
+
+[Compare Source](https://redirect.github.com/apalache-mc/apalache/compare/v0.58.0...v0.58.2)
+
+</details>
+
+### Composition (this repo)
+- Bumped to `0.58.2` (from `0.58.0`) via Renovate (#57).
+
+
 ## [0.58.0] — 2026-06-04
 **Digest:** _published on merge — see GitHub Release `gide-apalache-0.58.0`._
 
