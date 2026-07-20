@@ -13,7 +13,7 @@ FROM eclipse-temurin:25.0.3_9-jre-noble@sha256:f9bd8815e73632c22985ebb133ec49b9f
 # prover images (z3, cvc5) already build cleanly on a 24.04 base
 # under the same QEMU setup.
 ARG TARGETARCH
-ARG APALACHE_VERSION=0.58.2
+ARG APALACHE_VERSION=0.58.3
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl && \
     curl -fsSL --retry 5 --retry-delay 5 --retry-max-time 60 \
