@@ -7,6 +7,36 @@ conventions: see the [root CHANGELOG](../CHANGELOG.md). Licenses:
 
 <!-- renovate-pr-42 -->
 <!-- renovate-pr-57 -->
+<!-- renovate-pr-63 -->
+## [0.58.3] — 2026-07-20
+**Digest:** _published on merge — see GitHub Release `gide-apalache-0.58.3`._
+
+### Upstream
+- Apalache `0.58.3` — [release notes](https://github.com/apalache-mc/apalache/releases/tag/v0.58.3)
+
+<details><summary>Upstream release notes (captured from PR #63)</summary>
+
+### [`v0.58.3`](https://redirect.github.com/apalache-mc/apalache/blob/HEAD/CHANGES.md#0583---2026-07-09)
+
+[Compare Source](https://redirect.github.com/apalache-mc/apalache/compare/v0.58.2...v0.58.3)
+
+##### Features
+
+- `ConstSimplifier` now simplifies more set expressions: membership in the empty set (`x \in {}` becomes `FALSE`), trivial subset checks (`{} \subseteq S` and `S \subseteq S` become `TRUE`), empty-set identities for an arbitrary set (`{} \cup S`, `S \cup {}`, `{} \cap S`, `S \cap {}`, `{} \ S`, `S \ {}`), and self-operations (`S \cup S`, `S \cap S`, `S \ S`), see [#&#8203;1238](https://redirect.github.com/apalache-mc/apalache/issues/1238).
+
+##### Bug fixes
+
+- Fixed type checking of `TLCGet`/`TLCSet`: the register key may be a string (named register, e.g. `TLCGet("level")`) or an integer (numbered register, e.g. `TLCGet(2)`). The key argument is now polymorphic, so an operator mixing both forms type-checks, see [#&#8203;3274](https://redirect.github.com/apalache-mc/apalache/issues/3274).
+- Fixed `FoldSet` silently returning the base value when folding over a non-enumerated set such as `SUBSET S` or `[S -> T]`. The set is now marked for expansion, so folds over powersets produce the correct result, and folds over sets whose expansion is unsupported fail loudly instead of returning a wrong answer, see [#&#8203;3385](https://redirect.github.com/apalache-mc/apalache/issues/3385).
+- Fix the SANY parsing errors ([#&#8203;3401](https://redirect.github.com/apalache-mc/apalache/issues/3401))
+- Fixed a crash (`IllegalArgumentException: Unsupported expression`) in the type checker on unbounded quantifiers `\A x: P` and `\E x: P`. These expressions are now type-checked like their bounded counterparts, and are reported with a proper, source-located error only if they reach the model checker, see [#&#8203;2816](https://redirect.github.com/apalache-mc/apalache/issues/2816).
+
+</details>
+
+### Composition (this repo)
+- Bumped to `0.58.3` (from `0.58.2`) via Renovate (#63).
+
+
 ## [0.58.2] — 2026-06-29
 **Digest:** _published on merge — see GitHub Release `gide-apalache-0.58.2`._
 
