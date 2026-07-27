@@ -135,7 +135,7 @@ jobs:
       isabelle_mirror_image: ${{ steps.pins.outputs.isabelle_mirror_image }}
       afp_mirror_image: ${{ steps.pins.outputs.afp_mirror_image }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Resolve pins from inputs or in-tree Dockerfile
         id: pins
@@ -228,7 +228,7 @@ jobs:
         # matrix dimension.
         arch: ${{ fromJSON(needs.resolve-pins.outputs.mirror_arches) }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Login MUST precede `Set up Docker Buildx` (#1573): buildkit's
       # docker-container driver mounts `~/.docker/config.json` at
@@ -309,7 +309,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Login MUST precede `Set up Docker Buildx` (#1573): buildkit's
       # docker-container driver mounts `~/.docker/config.json` at
