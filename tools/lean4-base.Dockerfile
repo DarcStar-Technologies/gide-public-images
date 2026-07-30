@@ -1,4 +1,4 @@
-FROM ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
+FROM ubuntu:26.04@sha256:3131b4cc82a783df6c9df078f86e01819a13594b865c2cad47bd1bca2b7063bb
 # Lean4 BASE image: Ubuntu + elan + Lean4 toolchain + pre-compiled Mathlib.
 # This is the slow, upstream-driven layer (`LEAN4_TOOLCHAIN` and
 # `MATHLIB_REV` cold-build is 30-60 min per arch). It is rebuilt when
@@ -14,8 +14,8 @@ FROM ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e57
 # toolchain (via elan) and Mathlib both publish native aarch64-linux
 # artifacts, so this Dockerfile is arch-agnostic; the multi-arch
 # manifest is assembled by the workflow (`build-lean4-base-image.yml`).
-ARG LEAN4_TOOLCHAIN=leanprover/lean4:v4.30.0
-ARG MATHLIB_REV=v4.30.0
+ARG LEAN4_TOOLCHAIN=leanprover/lean4:v4.32.2
+ARG MATHLIB_REV=v4.32.2
 ARG TARGETARCH
 
 RUN apt-get update && \
