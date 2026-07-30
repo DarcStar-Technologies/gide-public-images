@@ -66,6 +66,24 @@ name: Mirror Isabelle Distribution to GHCR
 #   - `gide-isabelle-source:Isabelle2025-2-arm64`
 # AFP source is architecture-independent so the AFP mirror is single-
 # tagged: `gide-afp-source:afp-2026-06-01`.
+#
+# LEG INDEPENDENCE (#67). The two artifacts mirrored here — the Isabelle
+# distribution and the AFP source archive — are independent: different
+# upstream hosts, different cadences (AFP refreshes repeatedly within one
+# Isabelle line). Each is now a separate call to the reusable
+# `mirror-tarball.yml`, which:
+#
+#   - skips the upstream fetch entirely when the target tag already exists,
+#     so an unchanged pin never contacts its upstream host, and
+#   - fails on its own without dragging the other leg down.
+#
+# The downstream consumer no longer gates on THIS run's overall conclusion
+# either — `build-isabelle-base-image.yml` preflights the specific mirror
+# tags it consumes. Together that closes the failure mode from #66/db1a60a:
+# an AFP-only bump whose AFP leg published fine was blocked because the
+# untouched Isabelle-distribution legs died on `dist.isabelle.cit.tum.de:80`
+# being unreachable — a re-download that, with skip-if-exists, would never
+# have been attempted.
 
 on:
   workflow_dispatch:
@@ -186,6 +204,18 @@ jobs:
           # workflow_dispatch input was provided (push/cron triggers).
           mirror_arches="${input_arches:-[\"amd64\",\"arm64\"]}"
 
+          # Validate the arch list HERE. The per-arch upstream URL is now built
+          # by a GitHub expression in the mirror-isabelle job
+          # (`amd64 -> linux`, else `linux_arm`), which cannot fail loudly on an
+          # unknown arch the way the old inline `case` did — an unsupported
+          # value would silently mirror the arm tarball under the wrong tag.
+          bad=$(echo "${mirror_arches}" | jq -r '.[] | select(. != "amd64" and . != "arm64")')
+          if [ -n "${bad}" ]; then
+            echo "✗ Unsupported arch(es) in mirror_arches: ${bad}" >&2
+            echo "  Isabelle publishes tarballs for amd64 (linux) and arm64 (linux_arm) only." >&2
+            exit 1
+          fi
+
           # GHCR rejects mixed-case repository names, but
           # `${{ github.repository_owner }}` preserves the GitHub org's
           # display case (e.g. `DarcStar-Technologies`). Lowercase it
@@ -215,183 +245,55 @@ jobs:
           echo "  afp_dirname:      ${afp_dirname}"
           echo "  mirror_arches:    ${mirror_arches}"
 
+  # Leg 1 of 2 (#67): the Isabelle DISTRIBUTION — one tarball per arch off
+  # `isabelle.in.tum.de`, which 301s to `dist.isabelle.cit.tum.de` over plain
+  # HTTP :80. `fail-fast: false` keeps one arch's failure off the other, and
+  # `skip_if_exists` (the reusable workflow's default) means an unchanged
+  # ISABELLE_VERSION never contacts that host at all.
+  #
+  # No SHA-256 is passed: Isabelle publishes no per-arch SHA file, so
+  # ISABELLE_SHA256 is computed at pin-bump time and verified by the CONSUMER
+  # (`tools/isabelle-base.Dockerfile`) rather than here. The reusable workflow
+  # still runs `gzip -t`. Passing a single pin here would be wrong anyway — it
+  # would only ever match one arch.
   mirror-isabelle:
     name: Mirror Isabelle distribution (${{ matrix.arch }})
     needs: resolve-pins
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         # `mirror_arches` is a JSON-array string from resolve-pins
         # (default `["amd64","arm64"]`); `fromJSON` parses it into the
-        # matrix dimension.
+        # matrix dimension. resolve-pins validates the members, so the
+        # suffix expression below only ever sees amd64/arm64.
         arch: ${{ fromJSON(needs.resolve-pins.outputs.mirror_arches) }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+    uses: ./.github/workflows/mirror-tarball.yml
+    with:
+      artifact_class: Isabelle distribution (${{ matrix.arch }})
+      image: ${{ needs.resolve-pins.outputs.isabelle_mirror_image }}
+      tag: ${{ needs.resolve-pins.outputs.isabelle_version }}-${{ matrix.arch }}
+      # Isabelle ships a separate tarball per arch (`linux` for amd64,
+      # `linux_arm` for arm64) because the bundled PolyML differs.
+      url: https://isabelle.in.tum.de/dist/${{ needs.resolve-pins.outputs.isabelle_version }}_${{ matrix.arch == 'amd64' && 'linux' || 'linux_arm' }}.tar.gz
+      tarball_name: distribution.tar.gz
 
-      # Login MUST precede `Set up Docker Buildx` (#1573): buildkit's
-      # docker-container driver mounts `~/.docker/config.json` at
-      # builder-start time; credentials written after aren't visible.
-      - name: Authenticate to GHCR
-        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
-
-      - name: Compute upstream URL
-        id: url
-        run: |
-          set -euo pipefail
-          version="${{ needs.resolve-pins.outputs.isabelle_version }}"
-          arch="${{ matrix.arch }}"
-          case "$arch" in
-            amd64) suffix="linux" ;;
-            arm64) suffix="linux_arm" ;;
-            *) echo "Unsupported arch: $arch" >&2; exit 1 ;;
-          esac
-          url="https://isabelle.in.tum.de/dist/${version}_${suffix}.tar.gz"
-          echo "url=${url}" >> "${GITHUB_OUTPUT}"
-          echo "Upstream URL: ${url}"
-
-      - name: Download Isabelle tarball
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/mirror
-          curl -sSfL --connect-timeout 30 \
-            --retry 5 --retry-delay 5 --retry-max-time 600 \
-            --retry-all-errors --retry-connrefused \
-            -o /tmp/mirror/distribution.tar.gz \
-            "${{ steps.url.outputs.url }}"
-          ls -lah /tmp/mirror/distribution.tar.gz
-          # Sanity-check the tarball is well-formed before pushing.
-          gzip -t /tmp/mirror/distribution.tar.gz
-          echo "Tarball is gzip-valid."
-          echo "SHA-256: $(sha256sum /tmp/mirror/distribution.tar.gz | cut -d' ' -f1)"
-
-      - name: Build mirror image (FROM scratch + tarball)
-        run: |
-          set -euo pipefail
-          cat > /tmp/mirror/Dockerfile <<'EOF'
-          FROM scratch
-          COPY distribution.tar.gz /distribution.tar.gz
-          EOF
-          ls -lah /tmp/mirror/
-
-      - name: Push mirror image to GHCR
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: /tmp/mirror
-          file: /tmp/mirror/Dockerfile
-          # Multi-platform manifest list. The wrapper's CONTENT (the
-          # tarball) is differentiated by TAG (`-amd64` vs `-arm64`),
-          # not by manifest platform. Pushing both manifest variants
-          # makes the wrapper consumable from any-platform `COPY --from=`
-          # in Phase B without forcing the consumer to use
-          # `--platform=linux/amd64` overrides. Both variants point at
-          # the same `FROM scratch + COPY tarball` blob (identical
-          # layers, registry-side dedup), so the storage cost is just
-          # the second manifest entry (~hundreds of bytes).
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ needs.resolve-pins.outputs.isabelle_mirror_image }}:${{ needs.resolve-pins.outputs.isabelle_version }}-${{ matrix.arch }}
-          provenance: false
-          sbom: false
-
+  # Leg 2 of 2 (#67): the AFP SOURCE archive — a different host
+  # (`isa-afp.org`) on a different cadence. Architecture-independent, so a
+  # single tag serves both amd64 and arm64 consumers.
   mirror-afp:
     name: Mirror AFP source archive
     needs: resolve-pins
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      # Login MUST precede `Set up Docker Buildx` (#1573): buildkit's
-      # docker-container driver mounts `~/.docker/config.json` at
-      # builder-start time; credentials written after aren't visible.
-      - name: Authenticate to GHCR
-        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
-
-      - name: Download AFP tarball
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/mirror
-          curl -sSfL --connect-timeout 30 \
-            --retry 5 --retry-delay 5 --retry-max-time 600 \
-            --retry-all-errors --retry-connrefused \
-            -o /tmp/mirror/afp.tar.gz \
-            "${{ needs.resolve-pins.outputs.afp_url }}"
-          ls -lah /tmp/mirror/afp.tar.gz
-
-      - name: Verify AFP SHA-256
-        run: |
-          set -euo pipefail
-          expected="${{ needs.resolve-pins.outputs.afp_sha256 }}"
-          actual=$(sha256sum /tmp/mirror/afp.tar.gz | cut -d' ' -f1)
-          if [[ "$expected" != "$actual" ]]; then
-            echo "✗ AFP SHA-256 mismatch:" >&2
-            echo "  expected: ${expected}" >&2
-            echo "  actual:   ${actual}" >&2
-            echo "  url:      ${{ needs.resolve-pins.outputs.afp_url }}" >&2
-            exit 1
-          fi
-          echo "✓ AFP SHA-256 verified: ${actual}"
-          # Sanity-check the archive structure: AFP_DIRNAME must be the
-          # tarball's top-level directory, otherwise the consumer's
-          # `ln -s /opt/afp/${AFP_DIRNAME}/thys ...` symlink breaks.
-          # Materialize the listing to a file rather than piping through
-          # `head -1` — `set -o pipefail` would otherwise mark the
-          # pipeline as failed when `head` closes the pipe and `tar`
-          # exits via SIGPIPE (status 141).
-          dirname="${{ needs.resolve-pins.outputs.afp_dirname }}"
-          tar -tzf /tmp/mirror/afp.tar.gz > /tmp/mirror/listing.txt
-          first_line=$(head -1 /tmp/mirror/listing.txt)
-          if [[ "$first_line" != "${dirname}/"* ]]; then
-            echo "✗ AFP tarball top-level directory does not match afp_dirname=${dirname}" >&2
-            head -3 /tmp/mirror/listing.txt >&2
-            exit 1
-          fi
-          echo "✓ AFP top-level directory matches: ${dirname}"
-
-      - name: Build mirror image (FROM scratch + AFP tarball)
-        run: |
-          set -euo pipefail
-          cat > /tmp/mirror/Dockerfile <<'EOF'
-          FROM scratch
-          COPY afp.tar.gz /afp.tar.gz
-          EOF
-          ls -lah /tmp/mirror/
-
-      - name: Push AFP mirror image to GHCR
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: /tmp/mirror
-          file: /tmp/mirror/Dockerfile
-          # Multi-platform manifest list. AFP source is architecture-
-          # independent (it's the entry source tree, no compiled
-          # binaries), so the same tarball serves both amd64 and arm64
-          # consumers. Pushing both manifest variants makes the
-          # wrapper consumable from any-platform `COPY --from=` in
-          # Phase B without forcing the consumer to use
-          # `--platform=` overrides.
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ needs.resolve-pins.outputs.afp_mirror_image }}:${{ needs.resolve-pins.outputs.afp_dated_tag }}
-          provenance: false
-          sbom: false
+    uses: ./.github/workflows/mirror-tarball.yml
+    with:
+      artifact_class: AFP source
+      image: ${{ needs.resolve-pins.outputs.afp_mirror_image }}
+      tag: ${{ needs.resolve-pins.outputs.afp_dated_tag }}
+      url: ${{ needs.resolve-pins.outputs.afp_url }}
+      sha256: ${{ needs.resolve-pins.outputs.afp_sha256 }}
+      tarball_name: afp.tar.gz
+      # AFP_DIRNAME must be the tarball's top-level directory or the
+      # consumer's `ln -s /opt/afp/${AFP_DIRNAME}/thys ...` symlink dangles.
+      expect_top_dir: ${{ needs.resolve-pins.outputs.afp_dirname }}
 
   summary:
     name: Mirror summary
@@ -400,26 +302,38 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Print published tags
+      - name: Print leg outcomes
+        env:
+          # Per-leg RESULTS, not the run conclusion — the point of #67 is that
+          # these are independent. A failed distribution leg no longer implies
+          # the AFP tag is missing, and vice versa.
+          ISABELLE_RESULT: ${{ needs.mirror-isabelle.result }}
+          AFP_RESULT: ${{ needs.mirror-afp.result }}
+          AFP_STATUS: ${{ needs.mirror-afp.outputs.status }}
+          ARCHES: ${{ needs.resolve-pins.outputs.mirror_arches }}
+          ISABELLE_IMAGE: ${{ needs.resolve-pins.outputs.isabelle_mirror_image }}
+          ISABELLE_VERSION: ${{ needs.resolve-pins.outputs.isabelle_version }}
+          AFP_IMAGE: ${{ needs.resolve-pins.outputs.afp_mirror_image }}
+          AFP_TAG: ${{ needs.resolve-pins.outputs.afp_dated_tag }}
         run: |
           set -euo pipefail
-          # Group all writes into a single redirect (style hint
-          # SC2129 from shellcheck — prefer `{ ...; } >> file` over
-          # many individual redirects). The while-read loop's stdout
-          # is also captured by the outer block, so the per-arch
-          # lines land in the same summary file.
+          # Group all writes into a single redirect (shellcheck SC2129).
           {
             echo "## Mirror summary"
             echo ""
-            echo "### Isabelle distribution"
+            echo "Legs are independent (#67) — each is reported on its own."
+            echo ""
+            echo "### Isabelle distribution — \`${ISABELLE_RESULT}\`"
             # mirror_arches is a JSON array string; jq parses + iterates.
-            echo '${{ needs.resolve-pins.outputs.mirror_arches }}' | jq -r '.[]' | while read -r arch; do
-              echo "- \`${{ needs.resolve-pins.outputs.isabelle_mirror_image }}:${{ needs.resolve-pins.outputs.isabelle_version }}-${arch}\`"
+            echo "${ARCHES}" | jq -r '.[]' | while read -r arch; do
+              echo "- \`${ISABELLE_IMAGE}:${ISABELLE_VERSION}-${arch}\`"
             done
             echo ""
-            echo "### AFP source"
-            echo "- \`${{ needs.resolve-pins.outputs.afp_mirror_image }}:${{ needs.resolve-pins.outputs.afp_dated_tag }}\`"
+            echo "### AFP source — \`${AFP_RESULT}\` (${AFP_STATUS:-n/a})"
+            echo "- \`${AFP_IMAGE}:${AFP_TAG}\`"
             echo ""
-            echo "### Consumer (Phase B, follow-up)"
-            echo "Update \`tools/isabelle-base.Dockerfile\` to use multi-stage \`COPY --from=\` against these tags."
+            echo "### Downstream"
+            echo "\`build-isabelle-base-image.yml\` preflights the specific tags it"
+            echo "consumes, so a failed leg here only blocks the base rebuild when the"
+            echo "tag that leg owns is genuinely absent."
           } >> "${GITHUB_STEP_SUMMARY}"

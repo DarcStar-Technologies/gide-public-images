@@ -1,0 +1,247 @@
+name: Mirror upstream tarball to GHCR
+
+# Reusable (`workflow_call`) mirror for ONE upstream tarball -> ONE GHCR tag
+# (#67). Extracted from `mirror-isabelle-distribution.yml`, which used to
+# open-code this twice — once for the Isabelle distribution, once for the AFP
+# source archive — in a single workflow whose overall conclusion gated the
+# downstream base rebuild.
+#
+# Why this exists (#67): those two artifacts are INDEPENDENT. They live on
+# different upstream hosts and move on different cadences (AFP refreshes
+# repeatedly within one Isabelle line). Fusing them meant a transient outage on
+# one host blocked a bump that only touched the other. That is not theoretical:
+# in the `afp-2026-06-01` -> `afp-2026-07-21` bump (#66, merge db1a60a) the AFP
+# leg published fine while both Isabelle-distribution legs died on
+# `dist.isabelle.cit.tum.de:80` being unreachable, which failed the run and
+# skipped the base rebuild — for a re-download that would have been a no-op.
+#
+# The two defences this workflow adds:
+#
+#   1. `skip_if_exists` (default true) — probe the target tag FIRST and do
+#      nothing if it is already published. Mirror tags are content-addressed by
+#      construction (the tag names an immutable upstream release), so a tag that
+#      exists is already correct. An unchanged pin therefore never touches the
+#      upstream host at all, which is what makes an AFP-only bump immune to a
+#      TUM outage.
+#   2. One tarball per call, so each leg fails INDEPENDENTLY. Callers give each
+#      leg its own job; the downstream consumer gates on the tags it actually
+#      needs (see `build-isabelle-base-image.yml`'s preflight) rather than on a
+#      whole-run conclusion.
+#
+# Deliberately NOT generalized further: this mirrors a single tarball into a
+# `FROM scratch` wrapper. That covers the Isabelle distribution, the AFP source
+# archive, and — as follow-up under #67 — the solver binaries and the Lean4
+# toolchain, none of which are mirrored yet (they still egress to
+# github.com/raw.githubusercontent.com at image-build time). Adopting it for
+# those is intentionally out of scope here because each NEW mirror package needs
+# a one-time manual GHCR public-visibility flip (see SETUP.md), so they should
+# land as their own PRs with that step called out.
+
+on:
+  workflow_call:
+    inputs:
+      artifact_class:
+        description: "Human label for logs/summary, e.g. 'Isabelle distribution (amd64)' or 'AFP source'"
+        required: true
+        type: string
+      image:
+        description: "Target GHCR image ref WITHOUT tag, e.g. ghcr.io/<owner>/gide-afp-source"
+        required: true
+        type: string
+      tag:
+        description: "Target tag, e.g. Isabelle2025-2-amd64 or afp-2026-07-21"
+        required: true
+        type: string
+      url:
+        description: "Upstream tarball URL"
+        required: true
+        type: string
+      sha256:
+        description: "Expected SHA-256 of the tarball. Empty string disables the check (Isabelle publishes no per-arch SHA file)."
+        required: false
+        type: string
+        default: ""
+      tarball_name:
+        description: "Filename the tarball is stored under inside the mirror image, e.g. distribution.tar.gz"
+        required: true
+        type: string
+      expect_top_dir:
+        description: "If set, assert this is the tarball's top-level directory (guards the consumer's symlink)"
+        required: false
+        type: string
+        default: ""
+      platforms:
+        description: "Manifest platforms for the FROM scratch wrapper"
+        required: false
+        type: string
+        default: "linux/amd64,linux/arm64"
+      skip_if_exists:
+        description: "Skip the whole fetch when the target tag already exists (default true)"
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      status:
+        description: "One of: skipped-already-present | published"
+        value: ${{ jobs.mirror.outputs.status }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  mirror:
+    name: ${{ inputs.artifact_class }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      status: ${{ steps.probe.outputs.present == 'true' && 'skipped-already-present' || 'published' }}
+    steps:
+      # Login MUST precede `Set up Docker Buildx` (#1573): buildkit's
+      # docker-container driver mounts `~/.docker/config.json` at builder-start
+      # time; credentials written after aren't visible. The probe below also
+      # needs the credentials.
+      - name: Authenticate to GHCR
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      # The cheap check that makes an unchanged pin a true no-op. `imagetools
+      # inspect` is a manifest HEAD — it does not pull layers, so this costs a
+      # round-trip regardless of the tarball size.
+      - name: Probe whether target tag already exists
+        id: probe
+        env:
+          REF: ${{ inputs.image }}:${{ inputs.tag }}
+          SKIP_IF_EXISTS: ${{ inputs.skip_if_exists }}
+        run: |
+          set -euo pipefail
+          present=false
+          if [ "${SKIP_IF_EXISTS}" = "true" ]; then
+            if docker buildx imagetools inspect "${REF}" >/dev/null 2>&1; then
+              present=true
+            fi
+          fi
+          echo "present=${present}" >> "${GITHUB_OUTPUT}"
+          if [ "${present}" = "true" ]; then
+            echo "::notice::${REF} already published — skipping upstream fetch."
+          else
+            echo "${REF} not present (or skip_if_exists=false) — fetching from upstream."
+          fi
+
+      - name: Download tarball
+        if: steps.probe.outputs.present != 'true'
+        env:
+          URL: ${{ inputs.url }}
+          NAME: ${{ inputs.tarball_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/mirror
+          curl -sSfL --connect-timeout 30 \
+            --retry 5 --retry-delay 5 --retry-max-time 600 \
+            --retry-all-errors --retry-connrefused \
+            -o "/tmp/mirror/${NAME}" \
+            "${URL}"
+          ls -lah "/tmp/mirror/${NAME}"
+          # Sanity-check the tarball is well-formed before pushing.
+          gzip -t "/tmp/mirror/${NAME}"
+          echo "Tarball is gzip-valid."
+          echo "SHA-256: $(sha256sum "/tmp/mirror/${NAME}" | cut -d' ' -f1)"
+
+      # This is the boundary where upstream corruption / MITM / accidental URL
+      # drift gets caught — the consumer trusts the mirror, so the mirror has to
+      # be authoritative about what it is mirroring.
+      - name: Verify SHA-256
+        if: steps.probe.outputs.present != 'true' && inputs.sha256 != ''
+        env:
+          EXPECTED: ${{ inputs.sha256 }}
+          NAME: ${{ inputs.tarball_name }}
+          URL: ${{ inputs.url }}
+        run: |
+          set -euo pipefail
+          actual=$(sha256sum "/tmp/mirror/${NAME}" | cut -d' ' -f1)
+          if [ "${EXPECTED}" != "${actual}" ]; then
+            {
+              echo "✗ SHA-256 mismatch:"
+              echo "  expected: ${EXPECTED}"
+              echo "  actual:   ${actual}"
+              echo "  url:      ${URL}"
+            } >&2
+            exit 1
+          fi
+          echo "✓ SHA-256 verified: ${actual}"
+
+      # Guards the consumer's `ln -s /opt/afp/${AFP_DIRNAME}/thys ...`: if the
+      # tarball's top-level directory is not what the Dockerfile expects, the
+      # symlink dangles and the heap bake fails much later and less legibly.
+      #
+      # Materialize the listing to a file rather than piping through `head -1`
+      # — `set -o pipefail` would otherwise mark the pipeline as failed when
+      # `head` closes the pipe and `tar` exits via SIGPIPE (status 141).
+      - name: Verify top-level directory
+        if: steps.probe.outputs.present != 'true' && inputs.expect_top_dir != ''
+        env:
+          EXPECT: ${{ inputs.expect_top_dir }}
+          NAME: ${{ inputs.tarball_name }}
+        run: |
+          set -euo pipefail
+          tar -tzf "/tmp/mirror/${NAME}" > /tmp/mirror/listing.txt
+          first_line=$(head -1 /tmp/mirror/listing.txt)
+          case "${first_line}" in
+            "${EXPECT}/"*) ;;
+            *)
+              echo "✗ tarball top-level directory does not match expect_top_dir=${EXPECT}" >&2
+              head -3 /tmp/mirror/listing.txt >&2
+              exit 1 ;;
+          esac
+          echo "✓ top-level directory matches: ${EXPECT}"
+
+      - name: Build mirror image (FROM scratch + tarball)
+        if: steps.probe.outputs.present != 'true'
+        env:
+          NAME: ${{ inputs.tarball_name }}
+        run: |
+          set -euo pipefail
+          # No layer overhead, no apt baseline — just the upstream tarball under
+          # a stable path the consumer can `COPY --from=`.
+          {
+            echo "FROM scratch"
+            echo "COPY ${NAME} /${NAME}"
+          } > /tmp/mirror/Dockerfile
+          cat /tmp/mirror/Dockerfile
+          ls -lah /tmp/mirror/
+
+      - name: Push mirror image to GHCR
+        if: steps.probe.outputs.present != 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: /tmp/mirror
+          file: /tmp/mirror/Dockerfile
+          # The wrapper's CONTENT is differentiated by TAG, not by manifest
+          # platform. Pushing both manifest variants makes it consumable from an
+          # any-platform `COPY --from=` without the consumer needing
+          # `--platform=` overrides. Both variants point at the same blob
+          # (registry-side dedup), so the cost is the extra manifest entry.
+          platforms: ${{ inputs.platforms }}
+          push: true
+          tags: ${{ inputs.image }}:${{ inputs.tag }}
+          provenance: false
+          sbom: false
+
+      - name: Record outcome
+        env:
+          CLASS: ${{ inputs.artifact_class }}
+          REF: ${{ inputs.image }}:${{ inputs.tag }}
+          PRESENT: ${{ steps.probe.outputs.present }}
+        run: |
+          set -euo pipefail
+          if [ "${PRESENT}" = "true" ]; then
+            echo "- **${CLASS}** — \`${REF}\` _already present, upstream not contacted_" >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "- **${CLASS}** — \`${REF}\` published" >> "${GITHUB_STEP_SUMMARY}"
+          fi
