@@ -9,6 +9,44 @@ this image and are noted per entry. Format and conventions: see the
 [root CHANGELOG](../CHANGELOG.md). Licenses:
 [THIRD-PARTY-NOTICES](../THIRD-PARTY-NOTICES.md).
 
+## [Isabelle2025-2-afp-2026-07-21] — 2026-07-29
+**Digest:** _published on merge — see GitHub Release `gide-isabelle-base-Isabelle2025-2-afp-2026-07-21`._
+
+### Upstream
+- Isabelle `2025-2` — [home / `NEWS`](https://isabelle.in.tum.de/) (BSD-style)
+  — **unchanged**; `Isabelle2025-2` is still the current release, so the
+  distribution mirror tags do not move with this entry.
+- Archive of Formal Proofs `afp-2026-07-21` — [isa-afp.org](https://www.isa-afp.org/)
+  (per-entry licenses; dated snapshot whose `etc/version` reports
+  `AFP_VERSION=2025-2`, matching Isabelle2025-2 — verified against the upstream
+  tarball before pinning). Supersedes `afp-2026-06-01`; the intervening dated
+  snapshots (`afp-2026-07-15`, `afp-2026-07-17`) are skipped in favour of the
+  newest snapshot on the same Isabelle line.
+
+### Composition (this repo)
+- **AFP-only bump.** `AFP_DATED_TAG` / `AFP_SHA256` / `AFP_DIRNAME` advance to
+  `afp-2026-07-21` (tarball 102,780,837 bytes,
+  `sha256:544de82b35d1bb6aaa1923f11cdd50d702824a6e0601cd72ee7e43e5eca85d6f`).
+  No change to the bake recipe, the runtime base, or the tagging scheme.
+- **Pre-baked heaps unchanged:** `Complex_Bounded_Operators` (CBO) +
+  `Ordinary_Differential_Equations` (ODE), still one `isabelle build -j 1 -b`
+  invocation at `timeout_scale=2.0`; `thys/Complex_Bounded_Operators/ROOT` and
+  `thys/Ordinary_Differential_Equations/ROOT` both confirmed present in the new
+  snapshot, so both baked sessions keep their names.
+- Because the AFP pin feeds the `heap-builder` stage, this is a **cold rebuild**
+  (~90–150 min) rather than a thin-runtime relayer.
+- Adoption stays digest-gated downstream: the overlay pins this base by digest
+  and runs `ci-formal-theorems` before adopting, which is the gate for the open
+  ODE `session_start` regression
+  ([#54](https://github.com/DarcStar-Technologies/gide-public-images/issues/54)).
+
+### Provenance
+- SLSA provenance + SPDX SBOM attached at publish
+
+### Source mirrors (verbatim upstream tarballs, `FROM scratch`)
+- `gide-isabelle-source:Isabelle2025-2-{amd64,arm64}` — unchanged (see prior entry)
+- `gide-afp-source:afp-2026-07-21` — republished by the mirror on merge
+
 ## [Isabelle2025-2-afp-2026-06-01] — 2026-06-03
 **Digest:** `sha256:de775b26b79a8e3761470e7665f5679f47dc0edcd439d3cf81fe46517cd0351b`
 

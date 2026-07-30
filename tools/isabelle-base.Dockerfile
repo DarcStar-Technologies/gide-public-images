@@ -52,7 +52,7 @@ ARG ISABELLE_VERSION=Isabelle2025-2
 ARG ISABELLE_SHA256=a20a507bc7c1270d8be96a9f3fbec06345387789d2dc2c4d3df6260d47bfb33c
 
 # AFP release pinned by dated tag for reproducibility (#1022). The
-# DATED tag `afp-2026-06-01` is the correct pin shape: rolling tags
+# DATED tag `afp-2026-07-21` is the correct pin shape: rolling tags
 # like `afp-current` always serve the latest AFP, which would make the
 # SHA pin mismatch the contents the moment AFP rolls. The dated tag is
 # content-stable forever and matches the pinned `ISABELLE_VERSION`.
@@ -64,9 +64,11 @@ ARG ISABELLE_SHA256=a20a507bc7c1270d8be96a9f3fbec06345387789d2dc2c4d3df6260d47bf
 # Isabelle 2026 pre-release) — verify the tarball's own `etc/version`:
 #
 #   curl -sL https://isa-afp.org/release/<tag>.tar.gz \
-#     | tar xzO --wildcards '*/etc/version' | grep '^VERSION='
+#     | tar xzO --wildcards '*/etc/version' | grep '^AFP_VERSION='
 #
-# `afp-2026-06-01` reports `VERSION=2025-2`, matching Isabelle2025-2.
+# `afp-2026-07-21` reports `AFP_VERSION=2025-2`, matching Isabelle2025-2.
+# (The key is `AFP_VERSION`, not `VERSION` — an earlier revision of this
+# comment grepped `^VERSION=`, which silently matches nothing.)
 #
 # Future AFP refreshes: pick a dated tag whose `etc/version` matches the
 # bumped `ISABELLE_VERSION`, recompute `AFP_SHA256` via
@@ -74,9 +76,9 @@ ARG ISABELLE_SHA256=a20a507bc7c1270d8be96a9f3fbec06345387789d2dc2c4d3df6260d47bf
 # tarball's top-level dir naming differs. Then just edit these ARGs and
 # open a PR — merging republishes the source mirror tag and rebuilds the
 # base automatically (see build-isabelle-base-image.yml BUMP ORDERING).
-ARG AFP_DATED_TAG=afp-2026-06-01
-ARG AFP_SHA256=872f85ed0d026bfd13940a3f76c6a8cd0e995c2f7c895dbd4671e84bc6ce39d0
-ARG AFP_DIRNAME=afp-2026-06-01
+ARG AFP_DATED_TAG=afp-2026-07-21
+ARG AFP_SHA256=544de82b35d1bb6aaa1923f11cdd50d702824a6e0601cd72ee7e43e5eca85d6f
+ARG AFP_DIRNAME=afp-2026-07-21
 
 # Mirror image refs. Parameterised so the workflow can override during
 # bootstrap (e.g. point at a personal fork's GHCR namespace for local
