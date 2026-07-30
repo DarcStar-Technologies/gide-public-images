@@ -9,8 +9,45 @@ this image and are noted per entry. Format and conventions: see the
 [root CHANGELOG](../CHANGELOG.md). Licenses:
 [THIRD-PARTY-NOTICES](../THIRD-PARTY-NOTICES.md).
 
+## [Isabelle2025-2-afp-2026-07-21] — 2026-07-30 (unreleased; composition change)
+**Digest:** _published on merge — re-points the `Isabelle2025-2-afp-2026-07-21`
+version tag to a new digest (same upstream versions)._
+
+### Upstream
+- Isabelle `2025-2` and AFP `afp-2026-07-21` — **unchanged** from the entry
+  below. This is a composition change only.
+
+### Composition (this repo)
+- **AFP is now registered as an Isabelle _component_** (`isabelle components -u
+  /opt/afp/thys`) instead of via a hand-written `~/.isabelle/<ver>/ROOTS` line
+  ([#68](https://github.com/DarcStar-Technologies/gide-public-images/issues/68)).
+  This is the upstream-supported method ("From Isabelle2021-1 on, the recommended
+  method … is the `isabelle components -u` command",
+  [AFP help](https://www.isa-afp.org/help/)) and it eliminates 13
+  `*** Missing session sources entry ".../thys/{Deriving,Containers,Show,Wlog}/*.ML"`
+  errors from the CBO bake. Those came from `src/Pure/Build/store.scala` and mean
+  an `isabelle_sources` **path-spelling** mismatch (ROOTS named the
+  `/opt/afp/thys` symlink; the build recorded the resolved dated path) — the
+  `File.symbolic_path` conflation Makarius diagnosed on isabelle-users in 2023,
+  whose reported fix was exactly component registration. AFP's own
+  `etc/settings` declares `isabelle_directory '$AFP_BASE'` / `'$AFP'`, so paths
+  are recorded in one canonical symbolic form.
+- Side effect worth knowing: the AFP component compares `$ISABELLE_NAME` against
+  the tarball's `etc/version` and warns `### Version mismatch: <isabelle> with
+  afp-<ver>`, so the Isabelle/AFP pairing check is now enforced inside every
+  build rather than only by hand at bump time.
+- **No change to the bake recipe**, the runtime base, the pinned upstream
+  versions, or the tagging scheme. Registration lives in the `heap-builder`
+  stage, so this is a cold rebuild.
+
+### Provenance
+- SLSA provenance + SPDX SBOM attached at publish
+
+### Source mirrors (verbatim upstream tarballs, `FROM scratch`)
+- Unchanged — same tags and digests as the entry below.
+
 ## [Isabelle2025-2-afp-2026-07-21] — 2026-07-29
-**Digest:** _published on merge — see GitHub Release `gide-isabelle-base-Isabelle2025-2-afp-2026-07-21`._
+**Digest:** `sha256:62089f75103f2aa11ed1227c6f541d691939bfcb7f649958378a54dbef9636ab`
 
 ### Upstream
 - Isabelle `2025-2` — [home / `NEWS`](https://isabelle.in.tum.de/) (BSD-style)
@@ -33,19 +70,30 @@ this image and are noted per entry. Format and conventions: see the
   invocation at `timeout_scale=2.0`; `thys/Complex_Bounded_Operators/ROOT` and
   `thys/Ordinary_Differential_Equations/ROOT` both confirmed present in the new
   snapshot, so both baked sessions keep their names.
-- Because the AFP pin feeds the `heap-builder` stage, this is a **cold rebuild**
-  (~90–150 min) rather than a thin-runtime relayer.
+- Because the AFP pin feeds the `heap-builder` stage, this was a **cold rebuild**;
+  actual bake 54 min (`HOL-Analysis` 26:20, CBO 14:17, ODE 4:13).
 - Adoption stays digest-gated downstream: the overlay pins this base by digest
   and runs `ci-formal-theorems` before adopting, which is the gate for the open
   ODE `session_start` regression
   ([#54](https://github.com/DarcStar-Technologies/gide-public-images/issues/54)).
 
 ### Provenance
-- SLSA provenance + SPDX SBOM attached at publish
+- git `db1a60a` · SLSA provenance + SPDX SBOM attached at publish
+- `docker pull ghcr.io/darcstar-technologies/gide-isabelle-base@sha256:62089f75103f2aa11ed1227c6f541d691939bfcb7f649958378a54dbef9636ab`
+- **Published by manual `workflow_dispatch`** (run 30513573516), not by the usual
+  `workflow_run` chain. The mirror run for `db1a60a` concluded `failure` — its AFP
+  leg published fine, but both Isabelle-distribution legs died on an upstream
+  outage (`dist.isabelle.cit.tum.de:80` unreachable) even though that pin had not
+  moved, and the old whole-run success gate then skipped the base rebuild twice.
+  Both mirror tags this image `COPY --from=`s were present throughout, so the
+  dispatched build is equivalent to what the chain would have produced. Fixed in
+  [#67](https://github.com/DarcStar-Technologies/gide-public-images/issues/67)
+  (per-leg independence + skip-if-present + a preflight that gates on the tags
+  actually consumed).
 
 ### Source mirrors (verbatim upstream tarballs, `FROM scratch`)
 - `gide-isabelle-source:Isabelle2025-2-{amd64,arm64}` — unchanged (see prior entry)
-- `gide-afp-source:afp-2026-07-21` — republished by the mirror on merge
+- `gide-afp-source:afp-2026-07-21` — `sha256:c4fd69e8dc7eb9b0374141abc82f70a929f83dce3eb2add0a91f7573c8f6e5ef`
 
 ## [Isabelle2025-2-afp-2026-06-01] — 2026-06-03
 **Digest:** `sha256:de775b26b79a8e3761470e7665f5679f47dc0edcd439d3cf81fe46517cd0351b`

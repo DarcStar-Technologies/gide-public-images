@@ -31,10 +31,15 @@ name: Build & Push gide-isabelle-base Image
 # "proof-verified". See migration plan §2.7.
 #
 # Triggers:
-#   - workflow_run: after "Mirror Isabelle Distribution to GHCR" succeeds
+#   - workflow_run: after "Mirror Isabelle Distribution to GHCR" COMPLETES
 #     on a push (a merged Isabelle/AFP pin bump). The mirror republishes
 #     the source tags first, so the new gide-*-source tags exist before
-#     this build FROM-s them — no race, no manual ordering.
+#     this build FROM-s them — no race, no manual ordering. Since #67 the
+#     mirror's overall conclusion no longer gates this: the `preflight` job
+#     probes the specific mirror tags this image `COPY --from=`s, so a leg
+#     that failed for an artifact this build does not consume (e.g. the
+#     arm64 distribution, which this amd64-only base never FROMs) cannot
+#     block the rebuild.
 #   - weekly cron (Sunday 05:00 UTC) for Ubuntu / glibc CVE refreshes
 #   - workflow_dispatch with optional `isabelle_version` / `afp_*`
 #     inputs for one-off rebuilds
@@ -63,9 +68,10 @@ name: Build & Push gide-isabelle-base Image
 
 on:
   # Rebuild AFTER the source mirror republishes (a merged pin bump). The
-  # build-base `if:` gates this to mirror runs that SUCCEEDED and were
-  # push-triggered, so the mirror's liveness cron / override dispatches
-  # don't kick a ~2.5h rebuild.
+  # `preflight` job gates this to push-triggered mirror runs whose consumed
+  # tags are actually present, so the mirror's liveness cron / override
+  # dispatches don't kick a ~2.5h rebuild — and a mirror leg failure that
+  # left the needed tags intact no longer suppresses the publish (#67).
   workflow_run:
     workflows: ["Mirror Isabelle Distribution to GHCR"]
     types: [completed]
@@ -112,15 +118,101 @@ env:
   CANDIDATE_TAG: candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
-  build-base:
-    name: Build base (Isabelle + AFP + CBO heap)
-    # Run on schedule/dispatch; for the mirror workflow_run, only when it
-    # SUCCEEDED and was push-triggered (a merged pin bump) — not the
-    # mirror's liveness cron or out-of-band override dispatches.
+  # Gate the rebuild on the mirror tags this build actually CONSUMES, not on
+  # the mirror run's overall conclusion (#67).
+  #
+  # The old gate was `workflow_run.conclusion == 'success'`. That fused two
+  # unrelated questions — "did every mirror leg succeed?" versus "are the
+  # tarballs I need available?" — and answered the second with the first. In
+  # #66 (merge db1a60a) that cost a publish: the AFP leg published
+  # `gide-afp-source:afp-2026-07-21` fine, the untouched Isabelle-distribution
+  # legs failed on an unreachable `dist.isabelle.cit.tum.de:80`, the run
+  # concluded `failure`, and this build skipped twice (runs 30511385226,
+  # 30512168780) even though BOTH tarballs it needed were sitting in GHCR. It
+  # had to be published by manual dispatch (run 30513573516).
+  #
+  # This preflight asks the real question instead: do the two `COPY --from=`
+  # refs resolve? It is strictly SAFER than the conclusion gate, not looser —
+  # a mirror leg that fails while its tag is genuinely absent still blocks the
+  # build, and a leg that fails for a tag we do not consume (arm64, which this
+  # amd64-only base never FROMs) no longer blocks anything.
+  preflight:
+    name: Preflight (mirror tags present?)
+    # Still ignore the mirror's liveness cron and out-of-band override
+    # dispatches — those must not kick a multi-hour rebuild. Note the
+    # `conclusion` check is deliberately GONE; a failed mirror run whose
+    # relevant tag exists is now a legitimate trigger.
     if: >-
       github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push')
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      ready: ${{ steps.probe.outputs.ready }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Probe the mirror tags this build FROMs
+        id: probe
+        env:
+          # Same override precedence as `Resolve build args` below: dispatch
+          # inputs win, else the in-tree ARG defaults.
+          ISABELLE_VERSION_IN: ${{ inputs.isabelle_version }}
+          AFP_URL_IN: ${{ inputs.afp_url }}
+        run: |
+          set -euo pipefail
+          iv="${ISABELLE_VERSION_IN:-}"
+          [ -n "$iv" ] || iv="$(grep -m1 '^ARG ISABELLE_VERSION=' tools/isabelle-base.Dockerfile | sed 's/^ARG ISABELLE_VERSION=//')"
+          at=""
+          if [ -n "$AFP_URL_IN" ]; then at="${AFP_URL_IN##*/}"; at="${at%.tar.gz}"; fi
+          [ -n "$at" ] || at="$(grep -m1 '^ARG AFP_DATED_TAG=' tools/isabelle-base.Dockerfile | sed 's/^ARG AFP_DATED_TAG=//')"
+
+          owner_lower=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          # This base is amd64-only (bundled PolyML SIGILLs on arm64), so it
+          # FROMs the `-amd64` distribution tag only. An arm64 mirror failure is
+          # irrelevant to it and must not gate it.
+          isabelle_ref="ghcr.io/${owner_lower}/gide-isabelle-source:${iv}-amd64"
+          afp_ref="ghcr.io/${owner_lower}/gide-afp-source:${at}"
+
+          ready=true
+          for ref in "${isabelle_ref}" "${afp_ref}"; do
+            if docker buildx imagetools inspect "${ref}" >/dev/null 2>&1; then
+              echo "✓ present: ${ref}"
+            else
+              echo "::warning::missing mirror tag: ${ref}"
+              ready=false
+            fi
+          done
+
+          echo "ready=${ready}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "## Preflight"
+            echo ""
+            echo "- \`${isabelle_ref}\`"
+            echo "- \`${afp_ref}\`"
+            echo ""
+            if [ "${ready}" = "true" ]; then
+              echo "Both mirror tags present — proceeding with the base rebuild."
+            else
+              echo "**Skipping the base rebuild**: a mirror tag this image \`COPY --from=\`s is absent."
+              echo "Re-run the mirror for the missing leg, then re-dispatch this workflow."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  build-base:
+    name: Build base (Isabelle + AFP + CBO heap)
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
     # TODO(migration): GitHub-hosted standard public runner = 4 vCPU /
     # 16 GB / amd64 (FREE for public repos). The Dockerfile bakes the
     # heaps at `-j 1` (one session at a time) under 64-bit PolyML with a

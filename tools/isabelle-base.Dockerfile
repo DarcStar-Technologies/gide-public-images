@@ -151,11 +151,51 @@ ENV PATH="/opt/isabelle/bin:${PATH}"
 USER isabelle
 WORKDIR /home/isabelle
 
-# Register AFP with Isabelle's session resolver via the per-user ROOTS
-# file (each line = a directory containing session ROOT/ROOTS files;
-# /opt/afp/thys/ROOTS lists all AFP sessions). Required so
-# `isabelle build Complex_Bounded_Operators` can find the AFP sources.
-# The overlay extends this ROOTS file to also include Layer1..Layer5.
+# Register AFP as an Isabelle COMPONENT (`isabelle components -u`), which is
+# the upstream-supported method: "From Isabelle2021-1 on, the recommended
+# method for making the whole AFP available to Isabelle is the
+# `isabelle components -u` command" (https://www.isa-afp.org/help/).
+#
+# This replaces a hand-written `~/.isabelle/<ver>/ROOTS` line (gpi#68). The
+# ROOTS approach worked for session DISCOVERY but produced 13
+# `*** Missing session sources entry ".../thys/{Deriving,Containers,Show,
+# Wlog}/*.ML"` errors during the CBO bake. That message comes from
+# `src/Pure/Build/store.scala` —
+# `get(name).getOrElse(error("Missing session sources entry " ...))` — and
+# means a LOOKUP MISS in the session `.db`'s `isabelle_sources` table: the
+# file is registered under a different path SPELLING, not missing. We had two
+# spellings for every AFP file, because ROOTS named the `/opt/afp/thys`
+# symlink while the build recorded the resolved `/opt/afp/<dated-dir>/thys`.
+# Makarius diagnosed exactly this on isabelle-users ("Missing session sources
+# entry / source file er...", 2023-09-27): conflation of source file names via
+# `File.symbolic_path`, tied to `$AFP`/`$AFP_BASE`. The reporter's fix was to
+# register AFP as a component instead of hand-editing ROOTS.
+#
+# Why the component fixes it: AFP's own `thys/etc/settings` chains to the AFP
+# root component via `init_component "$(cd "$COMPONENT"; cd "$(pwd -P)"; cd ..;
+# pwd)"` — `pwd -P` RESOLVES the symlink, so `AFP_BASE` is always the physical
+# dated directory. The root `etc/settings` then declares
+# `isabelle_directory '$AFP_BASE'` and `isabelle_directory '$AFP'`, which is
+# the `File.symbolic_path` registration itself: Isabelle records source paths
+# in the symbolic `$AFP/...` form, so one canonical spelling reaches
+# `isabelle_sources`. Session discovery still works because the registered
+# component dir carries `thys/ROOTS` (1013 AFP entries).
+#
+# Bonus guard: the AFP root settings compare `$ISABELLE_NAME` against the
+# tarball's own `etc/version` and print `### Version mismatch: <isabelle> with
+# afp-<ver>` on a bad pairing — the check CLAUDE.md currently asks a human to
+# run by hand at bump time now also fires inside every build.
+#
+# Leaving ROOTS unwritten is deliberate and is what makes this safe for the
+# private overlay: the overlay appends its own Layer1..Layer5 entries to
+# `~/.isabelle/<ver>/ROOTS`, and it now owns that file outright instead of
+# sharing it with the AFP entry.
+#
+# NOTE: do NOT let `AFP_BUILD_OPTIONS` (which the AFP component defines as
+# `browser_info document=pdf ...`) reach the bake. The 2023 thread reports the
+# missing-entry condition escalating from noisy to FATAL once presentation /
+# browser_info is enabled, and the bake below deliberately does not reference
+# it.
 #
 # Force 64-bit PolyML (`x86_64-linux`; default picks `x86_64_32-linux`
 # which caps virtual address space at 4 GB and OOMs on the CBO heap-save
@@ -164,7 +204,7 @@ WORKDIR /home/isabelle
 # around 6 GB — comfortable headroom on the free GitHub-hosted
 # `ubuntu-24.04` runner (16 GB) that `build-isabelle-base-image.yml` uses.
 RUN mkdir -p ~/.isabelle/${ISABELLE_VERSION}/etc && \
-    echo "/opt/afp/thys" > ~/.isabelle/${ISABELLE_VERSION}/ROOTS && \
+    isabelle components -u /opt/afp/thys && \
     case "$TARGETARCH" in \
       amd64) ML_PLATFORM="x86_64-linux" ;; \
       *) echo "isabelle-base is amd64-only (bundled PolyML SIGILLs on ${TARGETARCH:-<unset>}); refusing to build" >&2; exit 1 ;; \
