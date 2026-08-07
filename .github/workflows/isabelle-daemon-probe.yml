@@ -89,7 +89,14 @@ jobs:
             REF="${BASE_IMAGE}:latest"
           fi
           echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
-          docker pull -q "${REF}"
+          # `manifest unknown` here usually means the digest was reaped by
+          # prune-old-image-tags.yml, not that it never existed -- older
+          # untagged base generations do not survive indefinitely. Check
+          # `gh api orgs/darcstar-technologies/packages/container/gide-isabelle-base/versions`.
+          if ! docker pull -q "${REF}"; then
+            echo "::error::Cannot pull ${REF}. If this is an older digest it may have been pruned from GHCR; list surviving versions with the packages API."
+            exit 1
+          fi
           echo "Probing ${REF}"
           docker image inspect "${REF}" \
             --format 'revision={{index .Config.Labels "org.opencontainers.image.revision"}} version={{index .Config.Labels "org.opencontainers.image.version"}}'
@@ -131,7 +138,10 @@ jobs:
             echo '| run | status | t_banner | t_poly (deps) | t_total | missing_sources |'
             echo '|---|---|---|---|---|---|'
           } >> "${GITHUB_STEP_SUMMARY}"
+          # Nullglob is off, so an unmatched glob would iterate over the
+          # literal pattern; skip it rather than emit a bogus row (and fail).
           for f in probe-out/run_*.log; do
+            [ -e "$f" ] || continue
             n="${f##*run_}"; n="${n%.log}"
             line="$(grep -m1 '^RESULT' "$f" || echo '')"
             st="$(sed -n 's/.*status=\([a-z_]*\).*/\1/p' <<<"$line")"
