@@ -48,7 +48,15 @@ IV="${ISABELLE_VERSION:-Isabelle2025-2}"
 
 now() { date +%s.%N; }
 el() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.1f", b-a}'; }
-past() { awk -v d="$1" -v n="$(now)" 'BEGIN{exit !(n>d)}'; }
+# Deadlines are INTEGER seconds on purpose. Computing them in awk as
+# `print a+t` silently truncates through the default %.6g output format --
+# a Unix epoch loses everything below 10^4 s, so the deadline can land in
+# the PAST and every wait returns instantly. That is a ~50%-of-the-time
+# failure that flips every ~83 minutes as the epoch advances. Bash integer
+# arithmetic has no such trap; second resolution is ample for a 900 s
+# ceiling, and `el()` keeps sub-second precision for the reported timings.
+epoch() { date +%s; }
+past() { [ "$(epoch)" -gt "$1" ]; }
 
 echo "INFO isabelle_version=${IV}"
 echo "INFO afp_registration=$(if [ -f "$HOME/.isabelle/$IV/etc/components" ]; then echo component; else echo roots; fi)"
@@ -85,7 +93,7 @@ fi
 rm -f /tmp/server-info.txt
 b0=$(now)
 isabelle server -n smoke > /tmp/server-info.txt 2>&1 &
-bdl=$(awk -v a="$b0" -v t="$CEILING" 'BEGIN{print a+t}')
+bdl=$(( $(epoch) + CEILING ))
 until grep -q 'password' /tmp/server-info.txt 2>/dev/null; do
   past "$bdl" && break
   sleep 0.25
@@ -126,12 +134,12 @@ s0=$(now)
 WATCH=$!
 
 printf 'session_start {"session": "%s"}\n' "$SESSION" >&3
-deadline=$(awk -v a="$s0" -v t="$CEILING" 'BEGIN{print a+t}')
-nopoly_cut=$(awk -v a="$s0" -v t="$NOPOLY" 'BEGIN{print a+t}')
+deadline=$(( $(epoch) + CEILING ))
+nopoly_cut=$(( $(epoch) + NOPOLY ))
 status=unknown
 while :; do
   # Bounded read so the hang checks below still run on a silent socket.
-  rem=$(awk -v d="$deadline" -v n="$(now)" 'BEGIN{r=d-n; if (r<1) r=1; if (r>5) r=5; printf "%d", r}')
+  rem=$(( deadline - $(epoch) )); [ "$rem" -lt 1 ] && rem=1; [ "$rem" -gt 5 ] && rem=5
   if IFS= read -r -t "$rem" line <&3; then
     printf '%.400s\n' "$line" >> /tmp/proto.log
     case "$line" in
