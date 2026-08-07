@@ -1,0 +1,156 @@
+name: Isabelle headless-daemon probe (diagnostic)
+
+# DIAGNOSTIC workflow (gpi#54) — not part of any publish path.
+#
+# Runs `tools/ci/isabelle-daemon-smoke.sh` in a loop against an arbitrary
+# published gide-isabelle-base digest and reports, per iteration, how long
+# the headless server takes to (a) print its info banner, (b) finish
+# `Sessions.deps` dependency resolution (measured as time-to-ML-process),
+# and (c) reach a terminal `FINISHED` for `session_start`.
+#
+# Why it exists: #54's wedge does NOT reproduce on fast dev hardware — a
+# 21-trial local matrix across the pre-fix and post-fix bases finished
+# 21/21 with no arm distinguishable, including on the exact image the issue
+# was filed against. The issue's own evidence has it manifesting in CI and
+# on slower hosts, so comparing base digests needs a dispatchable probe that
+# runs on that runner class.
+#
+# Keep it dispatch-only (never push/cron): each run pulls a ~6 GB image.
+# Free standard runner only (ubuntu-24.04), per repo policy.
+#
+# This run stays GREEN whether or not a wedge is observed — reproducing one
+# is a successful diagnosis, not a build failure. Read the job summary.
+
+on:
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: "gide-isabelle-base digest to probe (sha256:...); blank = :latest"
+        required: false
+        default: ""
+      iterations:
+        description: "session_start attempts"
+        required: false
+        default: "5"
+      mode:
+        description: "raw (as shipped) or probe (bake the CBO+ODE bridge session first)"
+        required: false
+        default: "raw"
+        type: choice
+        options: [raw, probe]
+      ceiling:
+        description: "seconds to wait for a terminal reply before giving up"
+        required: false
+        default: "900"
+      nopoly:
+        description: "seconds with no ML process before calling it a hang"
+        required: false
+        default: "480"
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: isabelle-daemon-probe
+  cancel-in-progress: false
+
+env:
+  BASE_IMAGE: ghcr.io/darcstar-technologies/gide-isabelle-base
+
+jobs:
+  probe:
+    name: Probe headless session_start
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve and pull the image under test
+        id: img
+        env:
+          DIGEST: ${{ inputs.digest }}
+        run: |
+          set -euo pipefail
+          if [ -n "${DIGEST}" ]; then
+            case "${DIGEST}" in
+              sha256:*) ;;
+              *) echo "::error::digest must start with sha256: (got '${DIGEST}')"; exit 1 ;;
+            esac
+            REF="${BASE_IMAGE}@${DIGEST}"
+          else
+            REF="${BASE_IMAGE}:latest"
+          fi
+          echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
+          docker pull -q "${REF}"
+          echo "Probing ${REF}"
+          docker image inspect "${REF}" \
+            --format 'revision={{index .Config.Labels "org.opencontainers.image.revision"}} version={{index .Config.Labels "org.opencontainers.image.version"}}'
+
+      - name: Run probe loop
+        env:
+          REF: ${{ steps.img.outputs.ref }}
+          ITERS: ${{ inputs.iterations }}
+          MODE: ${{ inputs.mode }}
+          CEILING: ${{ inputs.ceiling }}
+          NOPOLY: ${{ inputs.nopoly }}
+        run: |
+          set -uo pipefail
+          mkdir -p probe-out
+          for i in $(seq 1 "${ITERS}"); do
+            echo "::group::iteration ${i}"
+            # Each iteration gets a FRESH container: the shipped store must
+            # be re-resolved every time, which is what a daemon restart does.
+            docker run --rm -i --entrypoint bash "${REF}" -s -- \
+              "${MODE}" Complex_Bounded_Operators "${CEILING}" "${NOPOLY}" \
+              < tools/ci/isabelle-daemon-smoke.sh > "probe-out/run_${i}.log" 2>&1
+            echo "rc=$? (0=FINISHED clean)" >> "probe-out/run_${i}.log"
+            cat "probe-out/run_${i}.log"
+            echo "::endgroup::"
+          done
+
+      - name: Summarize
+        if: always()
+        env:
+          REF: ${{ steps.img.outputs.ref }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -uo pipefail
+          {
+            echo "## Headless \`session_start\` probe"
+            echo ''
+            echo "Image: \`${REF}\`  •  mode: \`${MODE}\`  •  runner: ubuntu-24.04"
+            echo ''
+            echo '| run | status | t_banner | t_poly (deps) | t_total | missing_sources |'
+            echo '|---|---|---|---|---|---|'
+          } >> "${GITHUB_STEP_SUMMARY}"
+          for f in probe-out/run_*.log; do
+            n="${f##*run_}"; n="${n%.log}"
+            line="$(grep -m1 '^RESULT' "$f" || echo '')"
+            st="$(sed -n 's/.*status=\([a-z_]*\).*/\1/p' <<<"$line")"
+            tb="$(sed -n 's/.*t_banner=\([^ ]*\).*/\1/p' <<<"$line")"
+            tp="$(sed -n 's/.*t_poly=\([^ ]*\).*/\1/p' <<<"$line")"
+            tt="$(sed -n 's/.*t_total=\([^ ]*\).*/\1/p' <<<"$line")"
+            ms="$(sed -n 's/^INFO missing_sources=\(.*\)/\1/p' "$f" | head -1)"
+            printf '| %s | %s | %s | %s | %s | %s |\n' \
+              "${n}" "${st:-?}" "${tb:-?}" "${tp:-?}" "${tt:-?}" "${ms:-?}" \
+              >> "${GITHUB_STEP_SUMMARY}"
+          done
+          if grep -lq 'status=hang' probe-out/*.log 2>/dev/null; then
+            echo "::warning::Wedge reproduced — at least one iteration hit the no-ML-process hang signature. Thread dump excerpts are in the run logs."
+          fi
+
+      - name: Upload probe logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: isabelle-daemon-probe
+          path: probe-out/
+          if-no-files-found: warn

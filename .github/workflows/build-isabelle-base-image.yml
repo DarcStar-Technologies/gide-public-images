@@ -14,11 +14,18 @@ name: Build & Push gide-isabelle-base Image
 # The workflow implements the verify-then-promote pattern:
 #   1. Build the base candidate and push as `:candidate-<sha>`.
 #   2. Run a self-contained TOOLCHAIN SMOKE test inside the candidate
-#      image: an inline `SmokeToolchain` theory that imports the
-#      pre-baked CBO heap (session parent) and the ODE heap (sibling
-#      session, via `imports ...Gronwall`) and proves a trivial lemma.
-#      This confirms both baked heaps load (and thus the AFP/Isabelle
-#      pairing is intact) without referencing any GIDE proof.
+#      image, in two legs:
+#        a. BATCH — an inline `SmokeToolchain` theory that imports the
+#           pre-baked CBO heap (session parent) and the ODE heap (sibling
+#           session, via `imports ...Gronwall`) and proves a trivial
+#           lemma. Confirms both baked heaps load (and thus the
+#           AFP/Isabelle pairing is intact) without referencing any GIDE
+#           proof.
+#        b. HEADLESS — `isabelle server` + `session_start` on the CBO
+#           heap (`tools/ci/isabelle-daemon-smoke.sh`). Batch builds
+#           resolve session dependencies differently from the headless
+#           server, so leg (a) stayed green through the #54 wedge; this
+#           leg covers the path a persistent Isabelle daemon drives.
 #   3. On smoke-green, retag the base candidate as `:latest` (and
 #      `:<sha>`). The candidate tag is left in place for forensics.
 #
@@ -330,7 +337,7 @@ jobs:
           sbom: true
 
   smoke:
-    name: Toolchain smoke test (CBO + ODE heaps load)
+    name: Toolchain smoke test (heap load + headless session_start)
     if: github.event_name != 'pull_request'
     needs: build-base
     # TODO(migration): the smoke job only loads the pre-baked heap and
@@ -338,8 +345,10 @@ jobs:
     # `ubuntu-24.04` (free public runner, amd64) is ample. Keep amd64 to
     # match the amd64-only base image.
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
       - name: Authenticate to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
@@ -408,6 +417,51 @@ jobs:
             -w /home/isabelle/smoke \
             "${{ env.BASE_IMAGE }}:${{ env.CANDIDATE_TAG }}" \
             build -d . -o timeout_scale=2.0 -v SmokeToolchain
+
+      # gpi#54 regression guard. The step above drives BATCH `isabelle
+      # build`, which resolves session dependencies differently from the
+      # headless server — #54 was a wedge that appeared only on the
+      # `isabelle server` + `session_start` path (what a persistent
+      # Isabelle daemon drives) while batch builds stayed green, so the
+      # batch smoke could not see it. This exercises that path and fails
+      # the candidate before promotion if it wedges, or if AFP source
+      # paths are registered under a spelling the session store does not
+      # know (gpi#68 — `Missing session sources entry`, which arrives on
+      # this path paired with `Consumer thread failure`).
+      #
+      # Still a TOOLCHAIN check: start a server, load a pre-baked heap,
+      # require a terminal reply. No proof content, no GIDE tooling.
+      - name: Headless-server session_start smoke inside candidate
+        env:
+          IMG: ${{ env.BASE_IMAGE }}:${{ env.CANDIDATE_TAG }}
+        run: |
+          set -euo pipefail
+          # The image ENTRYPOINT is `isabelle`, so the script is piped to an
+          # explicit bash and its args follow `-s --`.
+          docker run --rm -i --entrypoint bash "$IMG" -s -- \
+            raw Complex_Bounded_Operators 900 480 \
+            < tools/ci/isabelle-daemon-smoke.sh | tee /tmp/daemon-smoke.log
+
+      - name: Publish headless smoke timings
+        if: always()
+        run: |
+          set -uo pipefail
+          {
+            echo "### Headless \`session_start\` (gpi#54 guard)"
+            echo ''
+            echo '```'
+            grep -E '^(RESULT|INFO (heaps|afp_registration|missing_sources|consumer_failures))' \
+              /tmp/daemon-smoke.log || echo '(no result line — see step log)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # t_poly is the Sessions.deps resolution cost (the ML process is
+          # spawned only once dependency resolution completes). A healthy
+          # warm run is tens of seconds; a large jump is the early warning
+          # for #54-class drift, so surface it without failing the build.
+          tp=$(sed -n 's/.*t_poly=\([0-9.]*\).*/\1/p' /tmp/daemon-smoke.log | head -1)
+          if [ -n "${tp:-}" ] && awk -v v="$tp" 'BEGIN{exit !(v>300)}'; then
+            echo "::warning::Headless dependency resolution took ${tp}s (t_poly). Healthy is tens of seconds; watch for gpi#54-class drift."
+          fi
 
   promote:
     name: Promote candidate to :latest
