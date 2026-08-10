@@ -8,6 +8,14 @@ conventions: see the [root CHANGELOG](../CHANGELOG.md). Licenses:
 <!-- renovate-pr-42 -->
 <!-- renovate-pr-57 -->
 <!-- renovate-pr-61 -->
+<!-- renovate-pr-78 -->
+## [0.58.2] — 2026-08-10
+**Digest:** _published on merge — see GitHub Release `gide-apalache-0.58.2`._
+
+### Composition (this repo)
+- Base image / digest refresh via Renovate (#78) — no upstream version change. See PR #78.
+
+
 ## [0.58.2] — 2026-07-13
 **Digest:** _published on merge — see GitHub Release `gide-apalache-0.58.2`._
 
