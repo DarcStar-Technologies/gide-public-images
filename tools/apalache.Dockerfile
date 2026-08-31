@@ -1,4 +1,4 @@
-FROM eclipse-temurin:25.0.3_9-jre-noble@sha256:2f1da100788559b397bcf48c736169ea5b070bde84e55f203bbee8e83d87a175
+FROM eclipse-temurin:25.0.4_7-jre-noble@sha256:b4c93a50fc67612798db73d68ca3b0ee4ebdd51736e59cca370e689b9797037e
 # Apalache TLA+ symbolic model checker. Ships as a JVM tarball
 # (apalache.tgz / apalache-X.Y.Z.tgz) containing bin/ scripts + lib/
 # JARs, so the same artifact is portable to amd64 and arm64. The base
