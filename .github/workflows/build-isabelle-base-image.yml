@@ -152,7 +152,7 @@ jobs:
     if: >-
       github.event_name != 'workflow_run' ||
       github.event.workflow_run.event == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     outputs:
       ready: ${{ steps.probe.outputs.ready }}
@@ -228,7 +228,7 @@ jobs:
     # to a GitHub larger runner (e.g. `ubuntu-latest-8-cores` or a
     # 16GB+ tier) — public repos CAN use larger runners but they are
     # BILLED, whereas standard `ubuntu-24.04` is free. amd64-only.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # ~90-150 min for the cold CBO heap chain at `-j 1`, plus the added
     # ODE base session and its support deps (HOL-Decision_Procs, Triangle,
     # List-Index, Affine_Arithmetic, then the ODE theories incl. Gronwall
@@ -344,7 +344,7 @@ jobs:
     # proves a trivial lemma, so it is light on memory; standard
     # `ubuntu-24.04` (free public runner, amd64) is ample. Keep amd64 to
     # match the amd64-only base image.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -467,7 +467,7 @@ jobs:
     name: Promote candidate to :latest
     if: github.event_name != 'pull_request'
     needs: [build-base, smoke]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: write   # publish a GitHub Release per version (Phase 2, #29)

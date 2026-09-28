@@ -43,7 +43,7 @@ jobs:
     name: Trivy scan ${{ matrix.image }}
     # Free GitHub-hosted ARM runner on a public repo. Trivy is a
     # registry-pull-and-scan workload, not CPU-bound.
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 30
     strategy:
       fail-fast: false
