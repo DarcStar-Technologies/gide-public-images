@@ -92,7 +92,7 @@ permissions:
 jobs:
   mirror:
     name: ${{ inputs.artifact_class }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     outputs:
       status: ${{ steps.probe.outputs.present == 'true' && 'skipped-already-present' || 'published' }}

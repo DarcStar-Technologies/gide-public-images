@@ -52,7 +52,7 @@ concurrency:
 jobs:
   prune:
     name: Prune ${{ matrix.package }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -174,7 +174,7 @@ jobs:
     # version loses its tag), older than the cutoff and outside keep-recent-N.
     # Every tagged version is kept regardless of age.
     name: Prune untagged mirror churn ${{ matrix.package }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 10
     strategy:
       fail-fast: false

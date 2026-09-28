@@ -222,7 +222,7 @@ jobs:
     name: Merge base multi-arch manifest (candidate)
     if: github.event_name != 'pull_request'
     needs: build-base
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 10
     permissions:
       contents: read
@@ -268,7 +268,7 @@ jobs:
     name: Toolchain smoke test against candidate base
     if: github.event_name != 'pull_request'
     needs: merge-base-manifest
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - name: Authenticate to GHCR
@@ -326,7 +326,7 @@ jobs:
     name: Promote candidate to :latest
     if: github.event_name != 'pull_request'
     needs: [merge-base-manifest, smoke]
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 10
     permissions:
       contents: write   # publish a GitHub Release per version (Phase 2, #29)

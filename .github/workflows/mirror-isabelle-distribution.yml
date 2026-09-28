@@ -141,7 +141,7 @@ concurrency:
 jobs:
   resolve-pins:
     name: Resolve version pins
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       isabelle_version: ${{ steps.pins.outputs.isabelle_version }}
@@ -299,7 +299,7 @@ jobs:
     name: Mirror summary
     needs: [resolve-pins, mirror-isabelle, mirror-afp]
     if: ${{ always() }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Print leg outcomes

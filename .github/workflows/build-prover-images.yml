@@ -138,7 +138,7 @@ jobs:
     # the linux/arm64 secondary platform on z3/cvc5/apalache builds
     # via QEMU emulation (slower but acceptable for these small
     # Dockerfiles).
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -352,7 +352,7 @@ jobs:
     # Cost: free GitHub-hosted x86 mirrors the publish-path runner
     # so PR smoke-validate uses the same warm GHA cache scope and
     # the same toolchain as the publish path.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
