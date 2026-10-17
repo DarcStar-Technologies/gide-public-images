@@ -4,7 +4,7 @@ FROM ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e57
 # glibc version embedded in the artifact name differs (2.39 for amd64,
 # 2.38 for arm64 in v4.16.0), so the URL is computed at RUN time.
 ARG TARGETARCH
-ARG Z3_VERSION=4.16.0
+ARG Z3_VERSION=5.0.0
 ARG Z3_GLIBC_AMD64=2.39
 ARG Z3_GLIBC_ARM64=2.38
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip && \
